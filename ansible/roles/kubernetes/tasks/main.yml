@@ -1,0 +1,72 @@
+# =============================================================================
+# Role: kubernetes — Install kubeadm, kubelet, kubectl from official repo
+# =============================================================================
+# Adds the official Kubernetes apt repository (pkgs.k8s.io), installs the
+# three core packages at the pinned version, holds them, and enables kubelet.
+# =============================================================================
+---
+
+# ---------- 1. Create keyrings directory --------------------------------------
+- name: Ensure /etc/apt/keyrings directory exists
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# ---------- 2. Download Kubernetes GPG signing key ----------------------------
+- name: Download Kubernetes apt signing key
+  ansible.builtin.shell: |
+    curl -fsSL {{ kube_apt_key_url }} | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+  args:
+    creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+# ---------- 3. Add Kubernetes apt repository ----------------------------------
+- name: Add Kubernetes apt repository
+  ansible.builtin.apt_repository:
+    repo: "{{ kube_apt_repo }}"
+    filename: kubernetes
+    state: present
+    update_cache: true
+
+# ---------- 4. Install kubelet, kubeadm, kubectl at pinned version -----------
+- name: Install kubelet
+  ansible.builtin.apt:
+    name: "kubelet={{ kube_version }}"
+    state: present
+    allow_downgrade: true
+
+- name: Install kubeadm
+  ansible.builtin.apt:
+    name: "kubeadm={{ kube_version }}"
+    state: present
+    allow_downgrade: true
+
+- name: Install kubectl
+  ansible.builtin.apt:
+    name: "kubectl={{ kube_version }}"
+    state: present
+    allow_downgrade: true
+
+# ---------- 5. Hold packages to prevent unintended upgrades -------------------
+- name: Hold kubelet package
+  ansible.builtin.dpkg_selections:
+    name: kubelet
+    selection: hold
+
+- name: Hold kubeadm package
+  ansible.builtin.dpkg_selections:
+    name: kubeadm
+    selection: hold
+
+- name: Hold kubectl package
+  ansible.builtin.dpkg_selections:
+    name: kubectl
+    selection: hold
+
+# ---------- 6. Enable kubelet service -----------------------------------------
+- name: Enable kubelet service
+  ansible.builtin.systemd:
+    name: kubelet
+    enabled: true

@@ -1,0 +1,53 @@
+# =============================================================================
+# Role: nexus — Deploy Nexus Repository Manager as a Docker container
+# =============================================================================
+# Private Docker image registry. Jenkins pushes built images here, and
+# Kubernetes pulls them for deployment.
+# =============================================================================
+---
+
+# ---------- 1. Create data directory -----------------------------------------
+- name: Create Nexus data directory
+  ansible.builtin.file:
+    path: "{{ nexus_data_dir }}/data"
+    state: directory
+    owner: "200"
+    group: "200"
+    mode: "0755"
+
+# ---------- 2. Deploy docker-compose file ------------------------------------
+- name: Deploy Nexus docker-compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ nexus_data_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  register: nexus_compose
+
+# ---------- 3. Start Nexus ---------------------------------------------------
+- name: Start Nexus container
+  ansible.builtin.command:
+    cmd: docker compose up -d
+    chdir: "{{ nexus_data_dir }}"
+  when: nexus_compose.changed
+  changed_when: true
+
+# ---------- 4. Ensure Nexus is running (idempotent) -------------------------
+- name: Ensure Nexus container is running
+  ansible.builtin.command:
+    cmd: docker compose up -d
+    chdir: "{{ nexus_data_dir }}"
+  changed_when: false
+  when: not nexus_compose.changed
+
+# ---------- 5. Wait for Nexus to be ready -----------------------------------
+- name: Wait for Nexus to respond
+  ansible.builtin.uri:
+    url: "http://localhost:{{ nexus_http_port }}"
+    status_code: 200
+    timeout: 5
+  register: nexus_health
+  retries: 60
+  delay: 10
+  until: nexus_health.status == 200

@@ -1,0 +1,53 @@
+# =============================================================================
+# Role: cni — Install Flannel CNI plugin
+# =============================================================================
+# Deploys the Flannel overlay network to the cluster using kubectl apply.
+# Idempotent — checks for existing deployment before applying.
+# =============================================================================
+---
+
+# ---------- 1. Check if Flannel is already deployed ---------------------------
+- name: Check if Flannel DaemonSet exists
+  ansible.builtin.command: >
+    kubectl get daemonset kube-flannel-ds
+    --namespace=kube-flannel
+    --kubeconfig=/home/vagrant/.kube/config
+  register: flannel_check
+  changed_when: false
+  failed_when: false
+  become: false
+
+# ---------- 2. Download and patch Flannel manifest ----------------------------
+- name: Download Flannel manifest
+  ansible.builtin.get_url:
+    url: "{{ flannel_manifest_url }}"
+    dest: /tmp/kube-flannel.yml
+    mode: "0644"
+  when: flannel_check.rc != 0
+  become: false
+
+- name: Patch Flannel manifest to use correct interface (enp0s8)
+  ansible.builtin.replace:
+    path: /tmp/kube-flannel.yml
+    regexp: '(- --kube-subnet-mgr)'
+    replace: '\1\n        - --iface=enp0s8'
+  when: flannel_check.rc != 0
+  become: false
+
+# ---------- 3. Apply patched Flannel manifest ---------------------------------
+- name: Apply Flannel CNI manifest
+  ansible.builtin.command: >
+    kubectl apply -f /tmp/kube-flannel.yml
+    --kubeconfig=/home/vagrant/.kube/config
+  when: flannel_check.rc != 0
+  become: false
+
+# ---------- 4. Wait for Flannel pods to be ready ------------------------------
+- name: Wait for Flannel DaemonSet to be available
+  ansible.builtin.command: >
+    kubectl rollout status daemonset/kube-flannel-ds
+    --namespace=kube-flannel
+    --timeout=300s
+    --kubeconfig=/home/vagrant/.kube/config
+  changed_when: false
+  become: false

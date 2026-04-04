@@ -1,0 +1,14 @@
+# Nexus — Docker image registry and artifact repository
+# Managed by Ansible — do not edit manually
+version: "3.8"
+
+services:
+  nexus:
+    image: sonatype/nexus3:latest
+    container_name: nexus
+    restart: unless-stopped
+    ports:
+      - "{{ nexus_http_port }}:8081"
+      - "{{ nexus_docker_port }}:8082"
+    volumes:
+      - "{{ nexus_data_dir }}/data:/nexus-data"

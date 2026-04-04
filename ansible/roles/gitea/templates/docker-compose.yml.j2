@@ -1,0 +1,22 @@
+# Gitea — Self-hosted Git server
+# Managed by Ansible — do not edit manually
+version: "3.8"
+
+services:
+  gitea:
+    image: gitea/gitea:latest
+    container_name: gitea
+    restart: unless-stopped
+    environment:
+      - USER_UID=1000
+      - USER_GID=1000
+      - GITEA__server__ROOT_URL=http://{{ services_ip }}:{{ gitea_http_port }}/
+      - GITEA__server__SSH_DOMAIN={{ services_ip }}
+      - GITEA__server__SSH_PORT={{ gitea_ssh_port }}
+    ports:
+      - "{{ gitea_http_port }}:3000"
+      - "{{ gitea_ssh_port }}:22"
+    volumes:
+      - "{{ gitea_data_dir }}/data:/data"
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro

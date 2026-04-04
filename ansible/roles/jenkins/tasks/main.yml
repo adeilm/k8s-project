@@ -1,0 +1,67 @@
+# =============================================================================
+# Role: jenkins — Deploy Jenkins as a Docker container
+# =============================================================================
+# CI/CD server that pulls code from Gitea, builds Docker images, pushes them
+# to Nexus, and deploys applications to Kubernetes via Helm.
+# The Docker socket is mounted so Jenkins can build images directly.
+# =============================================================================
+---
+
+# ---------- 1. Create data directory -----------------------------------------
+- name: Create Jenkins data directory
+  ansible.builtin.file:
+    path: "{{ jenkins_data_dir }}/data"
+    state: directory
+    owner: "1000"
+    group: "1000"
+    mode: "0755"
+
+# ---------- 2. Deploy docker-compose file ------------------------------------
+- name: Deploy Jenkins docker-compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ jenkins_data_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  register: jenkins_compose
+
+# ---------- 3. Start Jenkins --------------------------------------------------
+- name: Start Jenkins container
+  ansible.builtin.command:
+    cmd: docker compose up -d
+    chdir: "{{ jenkins_data_dir }}"
+  when: jenkins_compose.changed
+  changed_when: true
+
+# ---------- 4. Ensure Jenkins is running (idempotent) ------------------------
+- name: Ensure Jenkins container is running
+  ansible.builtin.command:
+    cmd: docker compose up -d
+    chdir: "{{ jenkins_data_dir }}"
+    changed_when: false
+  when: not jenkins_compose.changed
+
+# ---------- 5. Wait for Jenkins to be ready ----------------------------------
+- name: Wait for Jenkins to respond
+  ansible.builtin.uri:
+    url: "http://localhost:{{ jenkins_http_port }}/login"
+    status_code: 200
+    timeout: 5
+  register: jenkins_health
+  retries: 60
+  delay: 10
+  until: jenkins_health.status == 200
+
+# ---------- 6. Retrieve initial admin password --------------------------------
+- name: Get Jenkins initial admin password
+  ansible.builtin.command:
+    cmd: docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword
+  register: jenkins_admin_password
+  changed_when: false
+  failed_when: false
+
+- name: Display Jenkins initial admin password
+  ansible.builtin.debug:
+    msg: "Jenkins initial admin password: {{ jenkins_admin_password.stdout }}"
+  when: jenkins_admin_password.rc == 0

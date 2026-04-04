@@ -1,0 +1,48 @@
+# =============================================================================
+# Role: nfs — Install and configure NFS server on the services VM
+# =============================================================================
+# Exports directories over NFS so Kubernetes PersistentVolumes can use them
+# for persistent storage (e.g., MySQL data).
+# =============================================================================
+---
+
+# ---------- 1. Install NFS server --------------------------------------------
+- name: Install NFS kernel server
+  ansible.builtin.apt:
+    name: nfs-kernel-server
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# ---------- 2. Create export directories -------------------------------------
+- name: Create NFS export directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: nobody
+    group: nogroup
+    mode: "0777"
+  loop: "{{ nfs_exports }}"
+
+# ---------- 3. Configure /etc/exports ----------------------------------------
+- name: Configure NFS exports
+  ansible.builtin.lineinfile:
+    path: /etc/exports
+    regexp: '^{{ item.path }}\s'
+    line: "{{ item.path }}  {{ nfs_allowed_network }}(rw,sync,no_subtree_check,no_root_squash)"
+    state: present
+    create: true
+  loop: "{{ nfs_exports }}"
+  notify: Restart NFS
+
+# ---------- 4. Export the filesystems ----------------------------------------
+- name: Export all NFS shares
+  ansible.builtin.command: exportfs -ra
+  changed_when: false
+
+# ---------- 5. Enable and start NFS service ----------------------------------
+- name: Enable and start NFS server
+  ansible.builtin.systemd:
+    name: nfs-kernel-server
+    state: started
+    enabled: true

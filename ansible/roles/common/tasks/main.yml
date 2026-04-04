@@ -1,0 +1,86 @@
+# =============================================================================
+# Role: common — System prerequisites for Kubernetes nodes
+# =============================================================================
+# Disables swap, loads kernel modules, sets sysctl parameters, installs
+# required packages, and populates /etc/hosts for cluster name resolution.
+# =============================================================================
+---
+
+# ---------- 1. Disable swap (runtime) ----------------------------------------
+- name: Check if swap is active
+  ansible.builtin.command: swapon --show
+  register: swap_status
+  changed_when: false
+  failed_when: false
+
+- name: Disable swap (runtime)
+  ansible.builtin.command: swapoff -a
+  when: swap_status.stdout | length > 0
+  changed_when: true
+
+# ---------- 2. Disable swap (persistent — remove from fstab) -----------------
+- name: Remove swap entries from /etc/fstab
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    regexp: '^\s*[^#].*\sswap\s'
+    state: absent
+  register: fstab_swap
+
+# ---------- 3. Load required kernel modules ----------------------------------
+- name: Load kernel module — overlay
+  ansible.builtin.command: modprobe overlay
+  changed_when: false
+
+- name: Load kernel module — br_netfilter
+  ansible.builtin.command: modprobe br_netfilter
+  changed_when: false
+
+# ---------- 4. Persist kernel modules across reboots -------------------------
+- name: Persist kernel modules in /etc/modules-load.d/k8s.conf
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/k8s.conf
+    content: |
+      # Kubernetes required kernel modules
+      overlay
+      br_netfilter
+    owner: root
+    group: root
+    mode: "0644"
+
+# ---------- 5. Configure sysctl parameters for Kubernetes networking ----------
+- name: Configure sysctl parameters for Kubernetes
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/k8s.conf
+    content: |
+      # Kubernetes networking requirements
+      net.bridge.bridge-nf-call-iptables  = 1
+      net.bridge.bridge-nf-call-ip6tables = 1
+      net.ipv4.ip_forward                 = 1
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload sysctl
+
+- name: Apply sysctl parameters immediately
+  ansible.builtin.command: sysctl --system
+  changed_when: false
+
+# ---------- 6. Install prerequisite packages ----------------------------------
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install common prerequisite packages
+  ansible.builtin.apt:
+    name: "{{ common_packages }}"
+    state: present
+
+# ---------- 7. Populate /etc/hosts with cluster node entries ------------------
+- name: Add cluster host entries to /etc/hosts
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '.*\s{{ item.hostname }}$'
+    line: "{{ item.ip }}  {{ item.hostname }}"
+    state: present
+  loop: "{{ cluster_hosts }}"

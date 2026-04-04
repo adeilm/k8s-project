@@ -1,0 +1,56 @@
+# =============================================================================
+# Role: master — Initialize the Kubernetes control plane
+# =============================================================================
+# Runs kubeadm init (only if not already initialized), configures kubectl for
+# the vagrant user, and extracts the worker join command for dynamic use.
+# =============================================================================
+---
+
+# ---------- 1. Check if the cluster is already initialized --------------------
+- name: Check if Kubernetes is already initialized
+  ansible.builtin.stat:
+    path: /etc/kubernetes/admin.conf
+  register: kubeadm_init_check
+
+# ---------- 2. Initialize the control plane -----------------------------------
+- name: Run kubeadm init
+  ansible.builtin.command: >
+    kubeadm init
+    --apiserver-advertise-address={{ master_ip }}
+    --pod-network-cidr={{ pod_network_cidr }}
+    --node-name={{ inventory_hostname }}
+  when: not kubeadm_init_check.stat.exists
+  register: kubeadm_init_result
+
+# ---------- 3. Configure kubectl for the vagrant user -------------------------
+- name: Create .kube directory for vagrant user
+  ansible.builtin.file:
+    path: /home/vagrant/.kube
+    state: directory
+    owner: vagrant
+    group: vagrant
+    mode: "0755"
+
+- name: Copy admin.conf to vagrant user's .kube/config
+  ansible.builtin.copy:
+    src: /etc/kubernetes/admin.conf
+    dest: /home/vagrant/.kube/config
+    remote_src: true
+    owner: vagrant
+    group: vagrant
+    mode: "0600"
+
+# ---------- 4. Generate and store the join command ----------------------------
+- name: Generate cluster join command
+  ansible.builtin.command: kubeadm token create --print-join-command
+  register: join_command_result
+  changed_when: false
+
+- name: Store join command as a host fact
+  ansible.builtin.set_fact:
+    kube_join_command: "{{ join_command_result.stdout }}"
+
+# ---------- 5. Debug — print join command (for verification) ------------------
+- name: Display join command
+  ansible.builtin.debug:
+    msg: "{{ kube_join_command }}"

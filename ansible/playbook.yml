@@ -1,0 +1,112 @@
+# =============================================================================
+# Play 1 — Prepare all Kubernetes nodes (common + containerd + kubernetes)
+# =============================================================================
+- name: Prepare Kubernetes nodes
+  hosts: k8s_nodes
+  become: true
+  gather_facts: true
+  roles:
+    - role: common
+    - role: containerd
+    - role: kubernetes
+
+# =============================================================================
+# Play 2 — Initialize the control plane and install CNI
+# =============================================================================
+- name: Initialize Kubernetes control plane
+  hosts: masters
+  become: true
+  gather_facts: false
+  roles:
+    - role: master
+    - role: cni
+
+# =============================================================================
+# Play 3 — Join worker nodes to the cluster
+# =============================================================================
+- name: Join worker nodes to the cluster
+  hosts: workers
+  become: true
+  gather_facts: false
+  roles:
+    - role: workers
+
+# =============================================================================
+# Play 4 — Prepare the services VM (base packages, /etc/hosts)
+# =============================================================================
+- name: Prepare services VM
+  hosts: services
+  become: true
+  gather_facts: true
+  tasks:
+    # Install prerequisite packages
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install common prerequisite packages
+      ansible.builtin.apt:
+        name: "{{ common_packages }}"
+        state: present
+
+    # Populate /etc/hosts with cluster node entries
+    - name: Add cluster host entries to /etc/hosts
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: '.*\s{{ item.hostname }}$'
+        line: "{{ item.ip }}  {{ item.hostname }}"
+        state: present
+      loop: "{{ cluster_hosts }}"
+
+# =============================================================================
+# Play 5 — Deploy services (NFS, Docker, Gitea, Nexus, Jenkins)
+# =============================================================================
+- name: Deploy services on services VM
+  hosts: services
+  become: true
+  gather_facts: true
+  roles:
+    - role: nfs
+    - role: docker
+    - role: gitea
+    - role: nexus
+    - role: jenkins
+
+# =============================================================================
+# Play 6 — Validate the cluster
+# =============================================================================
+- name: Validate Kubernetes cluster
+  hosts: masters
+  become: false
+  gather_facts: false
+  tasks:
+    # Wait for all nodes to become Ready
+    - name: Wait for all nodes to be Ready
+      ansible.builtin.shell: |
+        kubectl get nodes --no-headers | grep -v " Ready " | wc -l
+      register: not_ready_count
+      until: not_ready_count.stdout | trim | int == 0
+      retries: 60
+      delay: 10
+      changed_when: false
+
+    # Display node status
+    - name: Get node status
+      ansible.builtin.command: kubectl get nodes -o wide
+      register: nodes_output
+      changed_when: false
+
+    - name: Display node status
+      ansible.builtin.debug:
+        msg: "{{ nodes_output.stdout_lines }}"
+
+    # Display pod status
+    - name: Get pod status across all namespaces
+      ansible.builtin.command: kubectl get pods -A -o wide
+      register: pods_output
+      changed_when: false
+
+    - name: Display pod status
+      ansible.builtin.debug:
+        msg: "{{ pods_output.stdout_lines }}"

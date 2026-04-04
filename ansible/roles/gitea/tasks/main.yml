@@ -1,0 +1,53 @@
+# =============================================================================
+# Role: gitea — Deploy Gitea as a Docker container
+# =============================================================================
+# Self-hosted Git server for source code management. Jenkins will pull code
+# from Gitea repositories to build and deploy applications.
+# =============================================================================
+---
+
+# ---------- 1. Create data directories ---------------------------------------
+- name: Create Gitea data directory
+  ansible.builtin.file:
+    path: "{{ gitea_data_dir }}/data"
+    state: directory
+    owner: "1000"
+    group: "1000"
+    mode: "0755"
+
+# ---------- 2. Deploy docker-compose file ------------------------------------
+- name: Deploy Gitea docker-compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ gitea_data_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  register: gitea_compose
+
+# ---------- 3. Start Gitea ---------------------------------------------------
+- name: Start Gitea container
+  ansible.builtin.command:
+    cmd: docker compose up -d
+    chdir: "{{ gitea_data_dir }}"
+  when: gitea_compose.changed
+  changed_when: true
+
+# ---------- 4. Ensure Gitea is running (idempotent) -------------------------
+- name: Ensure Gitea container is running
+  ansible.builtin.command:
+    cmd: docker compose up -d
+    chdir: "{{ gitea_data_dir }}"
+  changed_when: false
+  when: not gitea_compose.changed
+
+# ---------- 5. Wait for Gitea to be ready -----------------------------------
+- name: Wait for Gitea to respond
+  ansible.builtin.uri:
+    url: "http://localhost:{{ gitea_http_port }}"
+    status_code: 200
+    timeout: 5
+  register: gitea_health
+  retries: 30
+  delay: 5
+  until: gitea_health.status == 200

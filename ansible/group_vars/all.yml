@@ -1,0 +1,68 @@
+# =============================================================================
+# Group Variables — Applied to ALL hosts
+# =============================================================================
+---
+
+# ---------- Kubernetes version -----------------------------------------------
+# Pinned to a specific stable release to ensure reproducibility.
+kube_version: "1.29.2-1.1"
+kube_major_version: "1.29"
+
+# ---------- Networking -------------------------------------------------------
+# Pod network CIDR — required by Flannel (hardcoded expectation).
+pod_network_cidr: "10.244.0.0/16"
+
+# Master node IP — used as the API server advertise address.
+master_ip: "192.168.56.10"
+
+# ---------- Kubernetes APT repository ----------------------------------------
+kube_apt_key_url: "https://pkgs.k8s.io/core:/stable:/v{{ kube_major_version }}/deb/Release.key"
+kube_apt_repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v{{ kube_major_version }}/deb/ /"
+
+# ---------- Flannel CNI manifest ---------------------------------------------
+flannel_manifest_url: "https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml"
+
+# ---------- Common prerequisite packages --------------------------------------
+common_packages:
+  - apt-transport-https
+  - ca-certificates
+  - curl
+  - gnupg
+  - lsb-release
+  - software-properties-common
+  - nfs-common
+
+# ---------- Node hostnames & IPs (for /etc/hosts) ----------------------------
+cluster_hosts:
+  - { hostname: "k8s-master",  ip: "192.168.56.10" }
+  - { hostname: "k8s-worker1", ip: "192.168.56.11" }
+  - { hostname: "k8s-worker2", ip: "192.168.56.12" }
+  - { hostname: "services",    ip: "192.168.56.20" }
+
+# =============================================================================
+# Services VM — NFS, Docker, Gitea, Nexus, Jenkins
+# =============================================================================
+
+# ---------- NFS server -------------------------------------------------------
+nfs_export_path: "/srv/nfs"
+nfs_exports:
+  - name: mysql-data
+    path: "/srv/nfs/mysql-data"
+nfs_allowed_network: "192.168.56.0/24"
+
+# ---------- Services VM IP ---------------------------------------------------
+services_ip: "192.168.56.20"
+
+# ---------- Gitea (self-hosted Git server) -----------------------------------
+gitea_http_port: 3000
+gitea_ssh_port: 2222
+gitea_data_dir: "/opt/gitea"
+
+# ---------- Nexus (Docker image registry) ------------------------------------
+nexus_http_port: 8081
+nexus_docker_port: 8082
+nexus_data_dir: "/opt/nexus"
+
+# ---------- Jenkins (CI/CD server) -------------------------------------------
+jenkins_http_port: 8080
+jenkins_data_dir: "/opt/jenkins"

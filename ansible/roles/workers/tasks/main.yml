@@ -1,0 +1,25 @@
+# =============================================================================
+# Role: workers — Join worker nodes to the Kubernetes cluster
+# =============================================================================
+# Joins each worker to the cluster using the join command extracted from the
+# master node. Skips if the node is already joined (kubelet.conf exists).
+# =============================================================================
+---
+
+# ---------- 1. Check if already joined the cluster ----------------------------
+- name: Check if node has already joined the cluster
+  ansible.builtin.stat:
+    path: /etc/kubernetes/kubelet.conf
+  register: kubelet_conf_check
+
+# ---------- 2. Join the cluster -----------------------------------------------
+- name: Join worker node to the cluster
+  ansible.builtin.command: "{{ hostvars['k8s-master']['kube_join_command'] }}"
+  when: not kubelet_conf_check.stat.exists
+  register: join_result
+
+# ---------- 3. Debug — print join result (for verification) -------------------
+- name: Display join result
+  ansible.builtin.debug:
+    msg: "Worker {{ inventory_hostname }} joined the cluster successfully."
+  when: join_result is changed
