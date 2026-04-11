@@ -38,6 +38,14 @@
     replace: 'SystemdCgroup = true'
   notify: Restart containerd
 
+# ---------- 4b. Set correct sandbox (pause) image for K8s 1.29 ---------------
+- name: Set sandbox image to pause:3.9 for Kubernetes 1.29
+  ansible.builtin.replace:
+    path: /etc/containerd/config.toml
+    regexp: 'sandbox_image\s*=\s*"registry\.k8s\.io/pause:3\.8"'
+    replace: 'sandbox_image = "registry.k8s.io/pause:3.9"'
+  notify: Restart containerd
+
 # ---------- 5. Enable and start containerd service ----------------------------
 - name: Enable and start containerd
   ansible.builtin.systemd:

@@ -65,7 +65,19 @@
     name: kubectl
     selection: hold
 
-# ---------- 6. Enable kubelet service -----------------------------------------
+# ---------- 6. Configure kubelet to use the correct node IP ------------------
+# Vagrant VMs have two NICs: NAT (10.0.2.15) and host-only (192.168.56.x).
+# Without this, kubelet defaults to the NAT IP, which breaks cluster
+# communication since the API server advertises on the host-only network.
+- name: Set kubelet node-ip to host-only interface
+  ansible.builtin.copy:
+    dest: /etc/default/kubelet
+    content: 'KUBELET_EXTRA_ARGS=--node-ip={{ ansible_host }}'
+    owner: root
+    group: root
+    mode: "0644"
+
+# ---------- 7. Enable kubelet service -----------------------------------------
 - name: Enable kubelet service
   ansible.builtin.systemd:
     name: kubelet
