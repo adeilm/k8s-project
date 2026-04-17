@@ -22,6 +22,21 @@
   when: not kubeadm_init_check.stat.exists
   register: kubeadm_init_result
 
+# ---------- 2b. Patch kube-proxy to use host-only IP (dual-NIC fix) -----------
+# kubeadm generates kube-proxy's kubeconfig using the default-route interface
+# (10.0.2.15 on Vagrant NAT), not --apiserver-advertise-address. Without this,
+# kube-proxy can't reach the API, Flannel crashes, and workers stay NotReady.
+- name: Patch kube-proxy ConfigMap to use master_ip
+  ansible.builtin.shell: |
+    kubectl -n kube-system get cm kube-proxy -o yaml \
+      | sed 's|server: https://.*:6443|server: https://{{ master_ip }}:6443|' \
+      | kubectl apply -f -
+    kubectl -n kube-system rollout restart ds/kube-proxy
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  when: not kubeadm_init_check.stat.exists
+  changed_when: true
+
 # ---------- 3. Configure kubectl for the vagrant user -------------------------
 - name: Create .kube directory for vagrant user
   ansible.builtin.file:
