@@ -4,6 +4,14 @@
 # Claude Code
 .claude/
 
+# Node / JavaScript
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+npm-debug.log*
+
 # OS
 .DS_Store
 Thumbs.db
@@ -14,3 +22,11 @@ Desktop.ini
 .idea/
 *.swp
 *~
+
+# Generated docs artifacts
+docs/*.aux
+docs/*.log
+docs/*.out
+docs/*.toc
+docs/*.fdb_latexmk
+docs/*.fls

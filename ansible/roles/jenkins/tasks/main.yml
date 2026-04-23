@@ -1,62 +1,65 @@
 # =============================================================================
-# Role: jenkins — Deploy Jenkins as a Docker container
+# Role: jenkins — Deploy Jenkins inside the Kubernetes cluster
 # =============================================================================
-# CI/CD server that pulls code from Gitea, builds Docker images, pushes them
-# to Nexus, and deploys applications to Kubernetes via Helm.
-# The Docker socket is mounted so Jenkins can build images directly.
+# Jenkins runs as a standard Deployment exposed through a NodePort service.
+# Persistent data is stored on the services VM over NFS so the Jenkins home
+# directory survives pod restarts and reprovisioning.
 # =============================================================================
 ---
 
-# ---------- 1. Create data directory -----------------------------------------
-- name: Create Jenkins data directory
-  ansible.builtin.file:
-    path: "{{ jenkins_data_dir }}/data"
-    state: directory
-    owner: "1000"
-    group: "1000"
-    mode: "0755"
-
-# ---------- 2. Deploy docker-compose file ------------------------------------
-- name: Deploy Jenkins docker-compose file
+# ---------- 1. Render the Kubernetes manifest --------------------------------
+- name: Render Jenkins Kubernetes manifest
   ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "{{ jenkins_data_dir }}/docker-compose.yml"
+    src: jenkins-manifest.yml.j2
+    dest: /tmp/jenkins-manifest.yml
     owner: root
     group: root
     mode: "0644"
-  register: jenkins_compose
+  register: jenkins_manifest
 
-# ---------- 3. Start Jenkins --------------------------------------------------
-- name: Start Jenkins container
+# ---------- 2. Apply the manifest --------------------------------------------
+- name: Apply Jenkins Kubernetes manifest
   ansible.builtin.command:
-    cmd: docker compose up -d
-    chdir: "{{ jenkins_data_dir }}"
-  when: jenkins_compose.changed
-  changed_when: true
+    cmd: kubectl apply -f /tmp/jenkins-manifest.yml
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: jenkins_apply
+  changed_when: "'created' in jenkins_apply.stdout or 'configured' in jenkins_apply.stdout"
 
-# ---------- 4. Ensure Jenkins is running (idempotent) ------------------------
-- name: Ensure Jenkins container is running
+# ---------- 3. Wait for the Deployment rollout --------------------------------
+- name: Wait for Jenkins deployment rollout
   ansible.builtin.command:
-    cmd: docker compose up -d
-    chdir: "{{ jenkins_data_dir }}"
-    changed_when: false
-  when: not jenkins_compose.changed
+    cmd: kubectl -n {{ jenkins_namespace }} rollout status deployment/jenkins --timeout=900s
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  changed_when: false
 
-# ---------- 5. Wait for Jenkins to be ready ----------------------------------
+# ---------- 4. Wait for Jenkins HTTP endpoint ---------------------------------
 - name: Wait for Jenkins to respond
   ansible.builtin.uri:
-    url: "http://localhost:{{ jenkins_http_port }}/login"
+    url: "http://{{ master_ip }}:{{ jenkins_nodeport }}/login"
     status_code: 200
     timeout: 5
   register: jenkins_health
-  retries: 60
+  retries: 90
   delay: 10
   until: jenkins_health.status == 200
 
-# ---------- 6. Retrieve initial admin password --------------------------------
+# ---------- 5. Find the Jenkins pod -------------------------------------------
+- name: Get Jenkins pod name
+  ansible.builtin.command:
+    cmd: kubectl -n {{ jenkins_namespace }} get pods -l app=jenkins -o jsonpath={.items[0].metadata.name}
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: jenkins_pod_name
+  changed_when: false
+
+# ---------- 6. Retrieve the initial admin password ----------------------------
 - name: Get Jenkins initial admin password
   ansible.builtin.command:
-    cmd: docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword
+    cmd: kubectl -n {{ jenkins_namespace }} exec {{ jenkins_pod_name.stdout }} -- cat /var/jenkins_home/secrets/initialAdminPassword
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
   register: jenkins_admin_password
   changed_when: false
   failed_when: false

@@ -2,7 +2,7 @@
 # Role: docker — Install Docker CE on the services VM
 # =============================================================================
 # Installs Docker from the official Docker repository so the services VM can
-# run Gitea, Nexus, and Jenkins as containers.
+# run Gitea and Nexus as containers.
 # =============================================================================
 ---
 

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Simple Todo</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main class="app">
+      <section class="card">
+        <h1>Simple Todo</h1>
+        <p class="subtitle">Tiny frontend + backend + Postgres for the local cluster.</p>
+
+        <form id="todo-form" class="todo-form">
+          <input
+            id="todo-input"
+            name="title"
+            type="text"
+            maxlength="255"
+            placeholder="Add a task"
+            autocomplete="off"
+            required
+          />
+          <button type="submit">Add</button>
+        </form>
+
+        <p id="status" class="status" aria-live="polite"></p>
+
+        <ul id="todo-list" class="todo-list"></ul>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

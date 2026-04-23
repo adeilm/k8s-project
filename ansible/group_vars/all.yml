@@ -40,7 +40,7 @@ cluster_hosts:
   - { hostname: "services",    ip: "192.168.56.20" }
 
 # =============================================================================
-# Services VM — NFS, Docker, Gitea, Nexus, Jenkins
+# Services VM — NFS, Docker, Gitea, Nexus
 # =============================================================================
 
 # ---------- NFS server -------------------------------------------------------
@@ -48,6 +48,10 @@ nfs_export_path: "/srv/nfs"
 nfs_exports:
   - name: mysql-data
     path: "/srv/nfs/mysql-data"
+  - name: jenkins-data
+    path: "/srv/nfs/jenkins-data"
+  - name: todo-postgres-data
+    path: "/srv/nfs/todo-postgres-data"
 nfs_allowed_network: "192.168.56.0/24"
 
 # ---------- Services VM IP ---------------------------------------------------
@@ -65,4 +69,7 @@ nexus_data_dir: "/opt/nexus"
 
 # ---------- Jenkins (CI/CD server) -------------------------------------------
 jenkins_http_port: 8080
-jenkins_data_dir: "/opt/jenkins"
+jenkins_namespace: "jenkins"
+jenkins_nodeport: 30080
+jenkins_storage_size: "8Gi"
+jenkins_nfs_path: "/srv/nfs/jenkins-data"

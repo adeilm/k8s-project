@@ -43,8 +43,8 @@
 │  │  └─────────────────┘                                              │ │
 │  │                                                                    │ │
 │  │  ┌─────────────────┐                                              │ │
-│  │  │    services     │  ← VM d'admin / CI/CD / Monitoring            │ │
-│  │  │ 192.168.56.20   │    NFS · Docker · Gitea · Nexus · Jenkins    │ │
+│  │  │    services     │  ← VM d'admin / stockage / registry           │ │
+│  │  │ 192.168.56.20   │    NFS · Docker · Gitea · Nexus               │ │
 │  │  │ 2 CPU / 4 GB    │                                              │ │
 │  │  └─────────────────┘                                              │ │
 │  └────────────────────────────────────────────────────────────────────┘ │
@@ -57,7 +57,7 @@
 | `k8s-master` | 192.168.56.10 | 2 | 4 Go | Control plane Kubernetes |
 | `k8s-worker1` | 192.168.56.11 | 2 | 2 Go | Noeud worker (exécute les Pods) |
 | `k8s-worker2` | 192.168.56.12 | 2 | 2 Go | Noeud worker (exécute les Pods) |
-| `services` | 192.168.56.20 | 2 | 4 Go | Administration, Ansible, NFS, Gitea, Nexus, Jenkins |
+| `services` | 192.168.56.20 | 2 | 4 Go | Administration, Ansible, NFS, Gitea, Nexus |
 
 ---
 
@@ -169,21 +169,20 @@ Pourquoi depuis la VM services ?
 
 ### 4.4 Services VM — Services déployés
 
-La VM `services` héberge l'infrastructure CI/CD et le stockage partagé, le tout via Docker :
+La VM `services` héberge le stockage partagé et les services auxiliaires, via Docker :
 
 | Service | Port | Accès | Rôle |
 |---------|------|-------|------|
 | **NFS** | 2049 | `192.168.56.20:/srv/nfs/*` | Stockage persistant pour les PersistentVolumes K8s |
 | **Gitea** | 3000 (HTTP), 2222 (SSH) | `http://192.168.56.20:3000` | Serveur Git auto-hébergé (dépôts de code source) |
 | **Nexus** | 8081 (HTTP), 8082 (Docker) | `http://192.168.56.20:8081` | Registre d'images Docker privé |
-| **Jenkins** | 8080 | `http://192.168.56.20:8080` | Serveur CI/CD (build, test, deploy) |
 
 **Flux CI/CD :**
 ```
 Développeur → push code → Gitea (port 3000)
                              │
                              ▼
-                          Jenkins (port 8080)
+                        Jenkins dans Kubernetes
                              │  build Docker image
                              ▼
                           Nexus (port 8082)
@@ -192,6 +191,8 @@ Développeur → push code → Gitea (port 3000)
                         Kubernetes
                           (kubectl apply / Helm)
 ```
+
+Jenkins n'est plus déployé sur la VM `services`. Il tourne maintenant dans le cluster Kubernetes, avec un volume persistant NFS et un accès HTTP exposé via `NodePort` sur `http://192.168.56.10:30080`.
 
 ### 4.5 Réseau
 
@@ -276,10 +277,11 @@ vagrant up
   │     ├── apt update + installer les packages communs
   │     └── Ajouter les entrées /etc/hosts
   │
-  ├── 7. Play 5 — Déployer les services (sur services) :
+  ├── 7. Play 5 — Déployer les services de la VM services :
   │     ├── Role: nfs
   │     │     ├── Installer nfs-kernel-server
   │     │     ├── Créer /srv/nfs/mysql-data
+  │     │     ├── Créer /srv/nfs/jenkins-data
   │     │     ├── Configurer /etc/exports (réseau 192.168.56.0/24)
   │     │     └── Démarrer le service NFS
   │     │
@@ -301,17 +303,19 @@ vagrant up
   │     │     ├── docker compose up -d
   │     │     └── Attendre que Nexus réponde (port 8081)
   │     │
+  │  ├── 8. Play 6 — Déployer Jenkins dans Kubernetes (sur k8s-master) :
   │     └── Role: jenkins
-  │           ├── Créer /opt/jenkins/data
-  │           ├── Générer docker-compose.yml depuis le template
-  │           ├── docker compose up -d
-  │           ├── Attendre que Jenkins réponde (port 8080)
+  │           ├── Générer le manifest Kubernetes
+  │           ├── Créer Namespace / PV / PVC / Deployment / Service
+  │           ├── Attendre le rollout du Deployment
+  │           ├── Vérifier l'accès HTTP via NodePort 30080
   │           └── Afficher le mot de passe admin initial
   │
-  └── 8. Play 6 — Validation (sur k8s-master) :
+  └── 9. Play 7 — Validation (sur k8s-master) :
         ├── Attendre que tous les noeuds soient Ready
         ├── Afficher kubectl get nodes
-        └── Afficher kubectl get pods -A
+        ├── Afficher kubectl get pods -A
+        └── Afficher kubectl -n jenkins get pods,svc,pvc
 ```
 
 ---
@@ -373,9 +377,9 @@ cluster/
         │   ├── tasks/main.yml           #   → docker compose up, health check
         │   └── templates/docker-compose.yml.j2
         │
-        └── jenkins/                     # Jenkins — CI/CD (services VM)
-            ├── tasks/main.yml           #   → docker compose up, health check, admin pwd
-            └── templates/docker-compose.yml.j2
+        └── jenkins/                     # Jenkins — CI/CD (dans Kubernetes)
+            ├── tasks/main.yml           #   → kubectl apply, rollout, health check, admin pwd
+            └── templates/jenkins-manifest.yml.j2
 ```
 
 ### Vagrantfile — Points Clés
@@ -419,7 +423,8 @@ nfs_export_path: "/srv/nfs"        # Répertoire NFS racine
 gitea_http_port: 3000              # Gitea → http://192.168.56.20:3000
 nexus_http_port: 8081              # Nexus → http://192.168.56.20:8081
 nexus_docker_port: 8082            # Nexus Docker registry port
-jenkins_http_port: 8080            # Jenkins → http://192.168.56.20:8080
+jenkins_http_port: 8080            # Port HTTP du conteneur Jenkins
+jenkins_nodeport: 30080            # Jenkins → http://192.168.56.10:30080
 ```
 
 ---
@@ -742,28 +747,42 @@ kubectl delete svc test-nginx
 vagrant ssh services -c "docker ps"
 ```
 
-**Résultat attendu :** 3 conteneurs running : `gitea`, `nexus`, `jenkins`
+**Résultat attendu :** 2 conteneurs running : `gitea`, `nexus`
 
 ```bash
 # Depuis la VM services — vérifier chaque service
 curl -s -o /dev/null -w '%{http_code}' http://localhost:3000     # Gitea → 200
 curl -s -o /dev/null -w '%{http_code}' http://localhost:8081     # Nexus → 200
-curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/login  # Jenkins → 200
 
 # Vérifier NFS
 showmount -e localhost
-# → /srv/nfs/mysql-data  192.168.56.0/24
-
-# Récupérer le mot de passe admin Jenkins
-docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword
+# → /srv/nfs/mysql-data et /srv/nfs/jenkins-data visibles
 ```
 
 **Accès depuis le navigateur (machine hôte) :**
 - Gitea : `http://192.168.56.20:3000`
 - Nexus : `http://192.168.56.20:8081`
-- Jenkins : `http://192.168.56.20:8080`
+- Jenkins : `http://192.168.56.10:30080`
 
-### 9.4 Checklist de Santé
+### 9.4 Vérification de Jenkins dans le cluster
+
+```bash
+# Depuis le master
+kubectl -n jenkins get pods,svc,pvc
+kubectl -n jenkins get pod -l app=jenkins
+curl -s -o /dev/null -w '%{http_code}' http://192.168.56.10:30080/login
+
+# Récupérer le mot de passe admin Jenkins
+kubectl -n jenkins exec deploy/jenkins -- cat /var/jenkins_home/secrets/initialAdminPassword
+```
+
+**Résultat attendu :**
+- `pod/jenkins-*` en `Running`
+- `service/jenkins` exposé en `NodePort`
+- `pvc/jenkins-home` en `Bound`
+- `curl .../login` retourne `200`
+
+### 9.5 Checklist de Santé
 
 | # | Vérification | Commande | Résultat Attendu |
 |---|-------------|----------|-------------------|
@@ -775,8 +794,8 @@ docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword
 | 6 | Pods multi-noeuds | `kubectl get pods -o wide` | Pods sur worker1 ET worker2 |
 | 7 | Gitea | `curl http://192.168.56.20:3000` | HTTP 200 |
 | 8 | Nexus | `curl http://192.168.56.20:8081` | HTTP 200 |
-| 9 | Jenkins | `curl http://192.168.56.20:8080/login` | HTTP 200 |
-| 10 | NFS exports | `showmount -e 192.168.56.20` | /srv/nfs/mysql-data visible |
+| 9 | Jenkins | `curl http://192.168.56.10:30080/login` | HTTP 200 |
+| 10 | NFS exports | `showmount -e 192.168.56.20` | `/srv/nfs/mysql-data` et `/srv/nfs/jenkins-data` visibles |
 
 ---
 
@@ -850,7 +869,7 @@ vagrant reload k8s-master
 vagrant reload k8s-worker1
 ```
 
-### Problème : Un service Docker ne démarre pas (Gitea/Nexus/Jenkins)
+### Problème : Un service Docker ne démarre pas (Gitea/Nexus)
 
 ```bash
 # Se connecter à la VM services
@@ -862,12 +881,27 @@ docker ps -a
 # Voir les logs d'un conteneur
 docker logs gitea
 docker logs nexus
-docker logs jenkins
 
 # Redémarrer un service
 cd /opt/gitea && docker compose down && docker compose up -d
 cd /opt/nexus && docker compose down && docker compose up -d
-cd /opt/jenkins && docker compose down && docker compose up -d
+```
+
+### Problème : Jenkins ne démarre pas dans Kubernetes
+
+```bash
+# Vérifier l'état général
+kubectl -n jenkins get pods,svc,pvc
+kubectl -n jenkins describe pod -l app=jenkins
+
+# Voir les logs Jenkins
+kubectl -n jenkins logs deploy/jenkins
+
+# Vérifier la connectivité NodePort
+curl -I http://192.168.56.10:30080/login
+
+# Vérifier que le volume NFS est bien monté
+kubectl -n jenkins describe pvc jenkins-home
 ```
 
 ### Problème : NFS non accessible depuis les workers
@@ -922,13 +956,17 @@ vagrant ssh k8s-master -c "kubectl get nodes"
 │                                                              │
 │  SERVICES VM :                                               │
 │    http://192.168.56.20:3000  → Gitea (Git server)           │
-│    http://192.168.56.20:8080  → Jenkins (CI/CD)              │
 │    http://192.168.56.20:8081  → Nexus (Docker registry)      │
 │    vagrant ssh services -c "docker ps"  → État conteneurs    │
+│                                                              │
+│  JENKINS DANS LE CLUSTER :                                   │
+│    http://192.168.56.10:30080 → Jenkins (NodePort)           │
+│    kubectl -n jenkins get pods,svc,pvc → État Jenkins        │
 │                                                              │
 │  VÉRIFICATION RAPIDE :                                       │
 │    vagrant ssh k8s-master -c "kubectl get nodes"             │
 │    vagrant ssh k8s-master -c "kubectl get pods -A"           │
+│    vagrant ssh k8s-master -c "kubectl -n jenkins get pods,svc,pvc" │
 │    vagrant ssh services -c "docker ps"                       │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘

@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: todo-backend
+  namespace: todo-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: todo-backend
+  template:
+    metadata:
+      labels:
+        app: todo-backend
+    spec:
+      containers:
+        - name: todo-backend
+          image: todo-backend:local
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 3000
+          env:
+            - name: PORT
+              value: "3000"
+            - name: DATABASE_URL
+              value: postgres://todo:todo@postgres:5432/todoapp
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: todo-backend
+  namespace: todo-app
+spec:
+  type: NodePort
+  selector:
+    app: todo-backend
+  ports:
+    - port: 3000
+      targetPort: 3000
+      nodePort: 30082

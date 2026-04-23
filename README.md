@@ -9,9 +9,9 @@ Fully automated Kubernetes cluster provisioned locally using **Vagrant** and **A
 | Master | k8s-master | 192.168.56.10 | 2 | 4 GB | Control plane |
 | Worker 1 | k8s-worker1 | 192.168.56.11 | 2 | 2 GB | Workload node |
 | Worker 2 | k8s-worker2 | 192.168.56.12 | 2 | 2 GB | Workload node |
-| Services | services | 192.168.56.20 | 2 | 4 GB | NFS, Gitea, Nexus, Jenkins |
+| Services | services | 192.168.56.20 | 2 | 4 GB | NFS, Gitea, Nexus, Ansible |
 
-**Stack:** Ubuntu 22.04 · Kubernetes 1.29.2 · containerd · Flannel CNI · kubeadm · Docker CE · Gitea · Nexus 3 · Jenkins LTS
+**Stack:** Ubuntu 22.04 · Kubernetes 1.29.2 · containerd · Flannel CNI · kubeadm · Docker CE · Gitea · Nexus 3 · Jenkins LTS on Kubernetes
 
 ---
 
@@ -34,6 +34,8 @@ Install the following on your host machine:
 cluster/
 ├── Vagrantfile                          # VM definitions & Ansible provisioner
 ├── docs/                                # Project documentation (md, docx, pdf)
+├── apps/
+│   └── todo/                            # Simple demo app (frontend, backend, k8s)
 ├── ansible/
 │   ├── inventory.ini                    # Static inventory with groups
 │   ├── group_vars/
@@ -49,7 +51,7 @@ cluster/
 │   │   ├── docker/                      # Docker CE (services VM)
 │   │   ├── gitea/                       # Gitea Git server (services VM)
 │   │   ├── nexus/                       # Nexus Docker registry (services VM)
-│   │   └── jenkins/                     # Jenkins CI/CD (services VM)
+│   │   └── jenkins/                     # Jenkins CI/CD (deployed in Kubernetes)
 │   └── playbook.yml                     # Main playbook (execution order)
 └── README.md                            # This file
 ```
@@ -70,8 +72,9 @@ This single command will:
 3. Initialize the Kubernetes control plane on `k8s-master`
 4. Join `k8s-worker1` and `k8s-worker2` to the cluster
 5. Deploy the Flannel CNI plugin
-6. Deploy NFS, Docker, Gitea, Nexus, and Jenkins on `services`
-7. Validate the cluster and display node/pod status
+6. Deploy NFS, Docker, Gitea, and Nexus on `services`
+7. Deploy Jenkins inside the Kubernetes cluster
+8. Validate the cluster and display node/pod status
 
 ### 2. Access the cluster
 
@@ -117,7 +120,19 @@ Expected pods — all `Running`:
 vagrant ssh services -c "docker ps"
 ```
 
-Expected containers — all running: `gitea`, `nexus`, `jenkins`
+Expected containers — all running: `gitea`, `nexus`
+
+### 5. Verify Jenkins in the cluster
+
+```bash
+vagrant ssh k8s-master -c "kubectl -n jenkins get pods,svc,pvc"
+```
+
+Expected resources:
+
+- `pod/jenkins-*` in `Running`
+- `service/jenkins` exposed on `NodePort`
+- `persistentvolumeclaim/jenkins-home` in `Bound`
 
 **Access from your browser:**
 
@@ -125,7 +140,7 @@ Expected containers — all running: `gitea`, `nexus`, `jenkins`
 |---------|-----|-------------|
 | Gitea | http://192.168.56.20:3000 | First-run setup wizard |
 | Nexus | http://192.168.56.20:8081 | admin / (see admin.password in container) |
-| Jenkins | http://192.168.56.20:8080 | Initial password displayed during provisioning |
+| Jenkins | http://192.168.56.10:30080 | Initial password displayed during provisioning |
 
 ---
 
@@ -152,9 +167,11 @@ Play 5 — services (deploy)
   └── docker       → Docker CE from official repo
   └── gitea        → Git server (port 3000)
   └── nexus        → Docker registry (port 8081/8082)
-  └── jenkins      → CI/CD server (port 8080)
 
 Play 6 — masters
+  └── jenkins      → Jenkins Deployment + Service + PVC (NodePort 30080)
+
+Play 7 — masters
   └── validation   → kubectl get nodes, kubectl get pods -A
 ```
 
@@ -181,6 +198,74 @@ vagrant status
 
 ---
 
+## Simple Todo App
+
+The repo now includes a minimal demo application under [`apps/todo`](apps/todo):
+
+- `frontend` — static HTML/CSS/JS served by Nginx
+- `backend` — Node.js + Express REST API
+- `k8s` — namespace, Postgres, backend, and frontend manifests
+
+### Build the images
+
+Build both images on a machine with Docker:
+
+```bash
+docker build -t todo-backend:local apps/todo/backend
+docker build -t todo-frontend:local apps/todo/frontend
+```
+
+### Load the images into the cluster
+
+Because the cluster uses `containerd`, import the images on each Kubernetes node before applying the manifests:
+
+```bash
+docker save todo-backend:local -o todo-backend.tar
+docker save todo-frontend:local -o todo-frontend.tar
+
+for node in k8s-master k8s-worker1 k8s-worker2; do
+  vagrant upload todo-backend.tar /home/vagrant/todo-backend.tar "$node"
+  vagrant upload todo-frontend.tar /home/vagrant/todo-frontend.tar "$node"
+  vagrant ssh "$node" -c "sudo ctr -n k8s.io images import /home/vagrant/todo-backend.tar"
+  vagrant ssh "$node" -c "sudo ctr -n k8s.io images import /home/vagrant/todo-frontend.tar"
+done
+```
+
+### Prepare storage and deploy
+
+If your cluster already exists, re-run provisioning once so the new NFS export for Postgres is created:
+
+```bash
+vagrant provision services
+```
+
+Deploy the app from the master node:
+
+```bash
+vagrant ssh k8s-master -c "kubectl apply -f /vagrant/apps/todo/k8s/namespace.yml"
+vagrant ssh k8s-master -c "kubectl apply -f /vagrant/apps/todo/k8s/postgres.yml"
+vagrant ssh k8s-master -c "kubectl apply -f /vagrant/apps/todo/k8s/backend.yml"
+vagrant ssh k8s-master -c "kubectl apply -f /vagrant/apps/todo/k8s/frontend.yml"
+```
+
+### Open the app
+
+- Frontend: `http://192.168.56.10:30081`
+- Backend health: `http://192.168.56.10:30082/api/health`
+
+### Verify persistence
+
+Create a few tasks, then restart Postgres and confirm they are still present:
+
+```bash
+vagrant ssh k8s-master -c "kubectl -n todo-app get pods,svc,pvc"
+vagrant ssh k8s-master -c "kubectl -n todo-app delete pod -l app=postgres"
+```
+
+The `todo-postgres-pvc` claim should stay `Bound`, and the tasks should still be visible after the Postgres pod comes back.
+
+---
+
 ## Configuration
 
 All configurable values are in [`ansible/group_vars/all.yml`](ansible/group_vars/all.yml):
@@ -196,7 +281,8 @@ All configurable values are in [`ansible/group_vars/all.yml`](ansible/group_vars
 | `gitea_http_port` | `3000` | Gitea web UI port |
 | `nexus_http_port` | `8081` | Nexus web UI port |
 | `nexus_docker_port` | `8082` | Nexus Docker registry port |
-| `jenkins_http_port` | `8080` | Jenkins web UI port |
+| `jenkins_http_port` | `8080` | Jenkins container web UI port |
+| `jenkins_nodeport` | `30080` | Jenkins Kubernetes NodePort |
 | `nfs_allowed_network` | `192.168.56.0/24` | Network allowed to mount NFS shares |
 
 ---
@@ -208,8 +294,8 @@ All configurable values are in [`ansible/group_vars/all.yml`](ansible/group_vars
 - **Explicit versioning** — Kubernetes packages are pinned and held
 - **Dynamic join token** — Worker join command is extracted from the master at runtime
 - **Ansible provisioner on last VM** — Ensures all VMs exist before any configuration begins
-- **Services node separated** — Not part of the K8s cluster; runs NFS, Gitea, Nexus, Jenkins via Docker
-- **Docker Compose per service** — Each service has its own docker-compose.yml generated from Jinja2 templates
+- **Services node separated** — Not part of the K8s cluster; runs NFS, Gitea, and Nexus via Docker while Jenkins runs in Kubernetes
+- **Kubernetes-hosted Jenkins** — CI/CD now runs as an in-cluster workload exposed through a NodePort service
 - **NFS for persistent storage** — Kubernetes PersistentVolumes backed by NFS exports from the services VM
 
 ---

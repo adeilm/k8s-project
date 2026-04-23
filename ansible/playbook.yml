@@ -60,7 +60,7 @@
       loop: "{{ cluster_hosts }}"
 
 # =============================================================================
-# Play 5 — Deploy services (NFS, Docker, Gitea, Nexus, Jenkins)
+# Play 5 — Deploy services VM workloads (NFS, Docker, Gitea, Nexus)
 # =============================================================================
 - name: Deploy services on services VM
   hosts: services
@@ -71,10 +71,19 @@
     - role: docker
     - role: gitea
     - role: nexus
+
+# =============================================================================
+# Play 6 — Deploy Jenkins inside Kubernetes
+# =============================================================================
+- name: Deploy Jenkins on Kubernetes
+  hosts: masters
+  become: true
+  gather_facts: false
+  roles:
     - role: jenkins
 
 # =============================================================================
-# Play 6 — Validate the cluster
+# Play 7 — Validate the cluster
 # =============================================================================
 - name: Validate Kubernetes cluster
   hosts: masters
@@ -110,3 +119,13 @@
     - name: Display pod status
       ansible.builtin.debug:
         msg: "{{ pods_output.stdout_lines }}"
+
+    # Display Jenkins workload state
+    - name: Get Jenkins resources
+      ansible.builtin.command: kubectl -n {{ jenkins_namespace }} get pods,svc,pvc
+      register: jenkins_output
+      changed_when: false
+
+    - name: Display Jenkins resources
+      ansible.builtin.debug:
+        msg: "{{ jenkins_output.stdout_lines }}"
