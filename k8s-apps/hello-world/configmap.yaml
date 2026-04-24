@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hello-world-html
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Hello from Kubernetes</title>
+      <style>
+        body { font-family: sans-serif; text-align: center; padding-top: 80px;
+               background: linear-gradient(135deg, #326CE5 0%, #10224C 100%);
+               color: white; min-height: 100vh; margin: 0; }
+        h1 { font-size: 4em; margin-bottom: 0; }
+        p  { font-size: 1.3em; }
+        code { background: rgba(0,0,0,0.3); padding: 4px 10px; border-radius: 4px; }
+      </style>
+    </head>
+    <body>
+      <h1>Hello World!</h1>
+      <p>Served from pod: <code id="pod"></code></p>
+      <p>Cluster: <code>k8s-master + 2 workers</code></p>
+      <script>document.getElementById('pod').textContent = window.location.hostname;</script>
+    </body>
+    </html>
