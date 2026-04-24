@@ -30,3 +30,4 @@ docs/*.out
 docs/*.toc
 docs/*.fdb_latexmk
 docs/*.fls
+.kubeconfig-for-jenkins
