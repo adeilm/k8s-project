@@ -9,9 +9,10 @@
 5. [Comment ça marche : le Flux de Provisioning](#5-comment-ça-marche--le-flux-de-provisioning)
 6. [Explication Fichier par Fichier](#6-explication-fichier-par-fichier)
 7. [Le Réseau dans notre Cluster](#7-le-réseau-dans-notre-cluster)
-8. [Commandes Essentielles à Connaître](#8-commandes-essentielles-à-connaître)
-9. [Guide de Vérification du Cluster](#9-guide-de-vérification-du-cluster)
-10. [Dépannage (Troubleshooting)](#10-dépannage-troubleshooting)
+8. [Applications incluses](#8-applications-incluses)
+9. [Commandes Essentielles à Connaître](#9-commandes-essentielles-à-connaître)
+10. [Guide de Vérification du Cluster](#10-guide-de-vérification-du-cluster)
+11. [Dépannage (Troubleshooting)](#11-dépannage-troubleshooting)
 
 ---
 
@@ -57,7 +58,7 @@
 | `k8s-master` | 192.168.56.10 | 2 | 4 Go | Control plane Kubernetes |
 | `k8s-worker1` | 192.168.56.11 | 2 | 2 Go | Noeud worker (exécute les Pods) |
 | `k8s-worker2` | 192.168.56.12 | 2 | 2 Go | Noeud worker (exécute les Pods) |
-| `services` | 192.168.56.20 | 2 | 4 Go | Administration, Ansible, NFS, Gitea, Nexus |
+| `services` | 192.168.56.20 | 2 | 4 Go | Administration, Ansible, NFS, Docker, Gitea, Nexus |
 
 ---
 
@@ -159,7 +160,7 @@ vagrant ssh <vm> →  Se connecter en SSH à une VM
 
 ### 4.2 Ansible
 
-**Ansible** automatise la configuration. Depuis la VM `services`, il se connecte en SSH aux 3 noeuds K8s et exécute toutes les tâches nécessaires.
+**Ansible** automatise la configuration. Depuis la VM `services`, il se connecte en SSH aux 3 noeuds K8s et configure aussi la VM `services` elle-même.
 
 ```
 Pourquoi depuis la VM services ?
@@ -167,7 +168,7 @@ Pourquoi depuis la VM services ?
 → La VM services installe Ansible via pip, puis exécute le playbook.
 ```
 
-### 4.4 Services VM — Services déployés
+### 4.3 Services VM — Services déployés
 
 La VM `services` héberge le stockage partagé et les services auxiliaires, via Docker :
 
@@ -177,24 +178,24 @@ La VM `services` héberge le stockage partagé et les services auxiliaires, via 
 | **Gitea** | 3000 (HTTP), 2222 (SSH) | `http://192.168.56.20:3000` | Serveur Git auto-hébergé (dépôts de code source) |
 | **Nexus** | 8081 (HTTP), 8082 (Docker) | `http://192.168.56.20:8081` | Registre d'images Docker privé |
 
-**Flux CI/CD :**
+**Flux CI/CD possible après configuration manuelle des jobs, credentials et outils Jenkins :**
 ```
 Développeur → push code → Gitea (port 3000)
                              │
                              ▼
                         Jenkins dans Kubernetes
-                             │  build Docker image
+                             │  build/test/deploy selon le Jenkinsfile
                              ▼
                           Nexus (port 8082)
-                             │  push image
+                             │  stocke les images/artifacts publiés
                              ▼
                         Kubernetes
-                          (kubectl apply / Helm)
+                          (kubectl apply / Helm / rollout)
 ```
 
 Jenkins n'est plus déployé sur la VM `services`. Il tourne maintenant dans le cluster Kubernetes, avec un volume persistant NFS et un accès HTTP exposé via `NodePort` sur `http://192.168.56.10:30080`.
 
-### 4.5 Réseau
+### 4.4 Réseau
 
 Chaque VM a **2 interfaces réseau** :
 
@@ -205,7 +206,7 @@ Chaque VM a **2 interfaces réseau** :
 
 **Important** : Flannel est configuré avec `--iface=enp0s8` pour utiliser le réseau host-only (et non le NAT).
 
-### 4.6 Réseaux IP
+### 4.5 Réseaux IP
 
 ```
 192.168.56.0/24   →  Réseau des VMs (host-only, communication entre VMs)
@@ -248,6 +249,7 @@ vagrant up
   │     │     ├── Installer containerd
   │     │     ├── Générer config par défaut
   │     │     ├── Activer SystemdCgroup = true
+  │     │     ├── Utiliser registry.k8s.io/pause:3.9
   │     │     └── Démarrer le service
   │     │
   │     └── Role: kubernetes
@@ -282,6 +284,7 @@ vagrant up
   │     │     ├── Installer nfs-kernel-server
   │     │     ├── Créer /srv/nfs/mysql-data
   │     │     ├── Créer /srv/nfs/jenkins-data
+  │     │     ├── Créer /srv/nfs/todo-postgres-data
   │     │     ├── Configurer /etc/exports (réseau 192.168.56.0/24)
   │     │     └── Démarrer le service NFS
   │     │
@@ -303,7 +306,7 @@ vagrant up
   │     │     ├── docker compose up -d
   │     │     └── Attendre que Nexus réponde (port 8081)
   │     │
-  │  ├── 8. Play 6 — Déployer Jenkins dans Kubernetes (sur k8s-master) :
+  ├── 8. Play 6 — Déployer Jenkins dans Kubernetes (sur k8s-master) :
   │     └── Role: jenkins
   │           ├── Générer le manifest Kubernetes
   │           ├── Créer Namespace / PV / PVC / Deployment / Service
@@ -325,14 +328,23 @@ vagrant up
 ### Structure du Projet
 
 ```
-cluster/
+k8s-project/
 ├── Vagrantfile                          # Définition des 4 VMs
+├── README.md                            # Vue d'ensemble et démarrage rapide
 ├── DOCUMENTATION.md                     # Ce fichier
 │
 ├── docs/                                # Documentation du projet
-│   ├── 01-Specification-Book.*          #   → Cahier des charges (md, docx, pdf)
-│   ├── 02-Step-by-Step-Guidebook.*      #   → Guide pas à pas (md, docx, pdf)
-│   └── 03-Architecture-Reference-Card.* #   → Fiche de référence architecture (md, docx, pdf)
+│   └── kubernetes-guide-tunisien.*      #   → Guide Kubernetes en dialecte tunisien
+│
+├── apps/
+│   └── todo/                            # Application todo exemple + manifests K8s
+│       ├── backend/                     # API Node.js/Express + PostgreSQL
+│       ├── frontend/                    # UI statique servie par nginx
+│       └── k8s/                         # Namespace, Postgres, backend, frontend
+│
+├── k8s-apps/
+│   ├── hello-world/                     # Exemple nginx avec HTML depuis ConfigMap
+│   └── hello-world-v2/                  # Exemple nginx avec image depuis Nexus
 │
 └── ansible/
     ├── inventory.ini                    # Liste des machines et connexions SSH
@@ -347,7 +359,7 @@ cluster/
         │   └── handlers/main.yml        #   → handler: sysctl --system
         │
         ├── containerd/                  # Runtime de conteneurs (K8s nodes)
-        │   ├── tasks/main.yml           #   → install, config, SystemdCgroup, start
+        │   ├── tasks/main.yml           #   → install, config, SystemdCgroup, pause:3.9, start
         │   └── handlers/main.yml        #   → handler: restart containerd
         │
         ├── kubernetes/                  # Paquets K8s (K8s nodes)
@@ -403,8 +415,8 @@ NODES = [
 ```ini
 [masters]            # Groupe : le master
 [workers]            # Groupe : les workers
-[services]           # Groupe : VM d'admin
-[k8s_cluster:children]  # Groupe parent = masters + workers
+[services]           # Groupe : VM services
+[k8s_nodes:children] # Groupe parent = masters + workers
   masters
   workers
 ```
@@ -425,6 +437,8 @@ nexus_http_port: 8081              # Nexus → http://192.168.56.20:8081
 nexus_docker_port: 8082            # Nexus Docker registry port
 jenkins_http_port: 8080            # Port HTTP du conteneur Jenkins
 jenkins_nodeport: 30080            # Jenkins → http://192.168.56.10:30080
+jenkins_namespace: "jenkins"       # Namespace Kubernetes de Jenkins
+jenkins_nfs_path: "/srv/nfs/jenkins-data"
 ```
 
 ---
@@ -488,9 +502,51 @@ Si les deux ne sont pas alignés, les Pods crashent avec des erreurs de cgroup.
 
 ---
 
-## 8. Commandes Essentielles à Connaître
+## 8. Applications incluses
 
-### 8.1 Commandes Vagrant (depuis ton PC Windows)
+Le repo contient aussi des manifests d'applications de démonstration. Ces applications ne sont pas déployées automatiquement par `ansible/playbook.yml`.
+
+| Chemin | Description | Ports / accès | Remarque |
+|--------|-------------|---------------|----------|
+| `apps/todo` | Frontend nginx + API Node.js/Express + PostgreSQL | Frontend `30081`, API `30082` | Exemple complet avec stockage Postgres sur NFS |
+| `k8s-apps/hello-world` | nginx avec page HTML fournie par ConfigMap | NodePort `30080` | Conflit avec Jenkins si le port n'est pas changé |
+| `k8s-apps/hello-world-v2` | nginx avec image `192.168.56.20:8082/hello-world:1` | NodePort `30080` | Conflit avec Jenkins si le port n'est pas changé |
+
+### 8.1 Application Todo
+
+L'application todo utilise :
+
+- `apps/todo/frontend` : HTML/CSS/JavaScript servi par `nginx:1.27-alpine`.
+- `apps/todo/backend` : API Node.js 20 avec Express et `pg`.
+- `apps/todo/k8s/postgres.yml` : PostgreSQL `16-alpine`, PVC `todo-postgres-pvc`, PV NFS `/srv/nfs/todo-postgres-data`.
+- `apps/todo/k8s/frontend.yml` : Service NodePort `30081`.
+- `apps/todo/k8s/backend.yml` : Service NodePort `30082`.
+
+Les manifests backend/frontend utilisent `todo-backend:local` et `todo-frontend:local` avec `imagePullPolicy: Never`. Avant de les appliquer, il faut donc soit importer ces images dans le runtime des noeuds Kubernetes, soit remplacer les images par des tags poussés dans Nexus.
+
+```bash
+kubectl apply -f apps/todo/k8s/namespace.yml
+kubectl apply -f apps/todo/k8s/postgres.yml
+kubectl apply -f apps/todo/k8s/backend.yml
+kubectl apply -f apps/todo/k8s/frontend.yml
+```
+
+Accès après déploiement manuel :
+
+```text
+Frontend : http://192.168.56.10:30081
+API      : http://192.168.56.10:30082/api/health
+```
+
+### 8.2 Exemples Hello World
+
+Les deux manifests `k8s-apps/hello-world/service.yaml` et `k8s-apps/hello-world-v2/service.yaml` utilisent actuellement `nodePort: 30080`. Ce port est déjà utilisé par Jenkins dans le playbook Ansible. Pour tester un de ces exemples avec Jenkins actif, changer le NodePort dans le manifest avant `kubectl apply`.
+
+---
+
+## 9. Commandes Essentielles à Connaître
+
+### 9.1 Commandes Vagrant (depuis ton PC Windows)
 
 ```powershell
 # Démarrer le cluster
@@ -520,7 +576,7 @@ vagrant destroy -f
 vagrant up
 ```
 
-### 8.2 Commandes kubectl (depuis k8s-master)
+### 9.2 Commandes kubectl (depuis k8s-master)
 
 #### Noeuds
 
@@ -653,7 +709,7 @@ kubectl delete -f mon-fichier.yml
 kubectl apply -f mon-fichier.yml --dry-run=client
 ```
 
-### 8.3 Commandes Rapides Combinées (depuis Windows)
+### 9.3 Commandes Rapides Combinées (depuis Windows)
 
 ```powershell
 # Vérifier les noeuds sans se connecter en SSH
@@ -668,9 +724,9 @@ vagrant ssh k8s-master -c "kubectl get svc"
 
 ---
 
-## 9. Guide de Vérification du Cluster
+## 10. Guide de Vérification du Cluster
 
-### 9.1 Vérification Rapide (30 secondes)
+### 10.1 Vérification Rapide (30 secondes)
 
 ```powershell
 # Depuis Windows :
@@ -688,10 +744,11 @@ k8s-worker2   Ready    <none>          Xm    v1.29.2
 ```
 
 - ✅ Les **3 noeuds** doivent être **Ready**
-- ✅ Tous les pods doivent être **Running** (12 pods au total)
+- ✅ Les pods système doivent être **Running**
+- ✅ Le pod Jenkins doit être **Running** dans le namespace `jenkins`
 - ❌ Si un noeud est **NotReady** → attendre quelques minutes ou vérifier kubelet
 
-### 9.2 Vérification Complète (5 minutes)
+### 10.2 Vérification Complète (5 minutes)
 
 Se connecter au master :
 
@@ -707,7 +764,7 @@ kubectl get nodes -o wide
 
 # 2. Vérifier tous les pods système
 kubectl get pods -A
-# Les 12 pods doivent être Running :
+# Les pods système doivent être Running :
 #   - 3x kube-flannel-ds (un par noeud)
 #   - 2x coredns
 #   - 1x etcd
@@ -740,7 +797,7 @@ kubectl delete deployment test-nginx
 kubectl delete svc test-nginx
 ```
 
-### 9.3 Vérification de la VM Services
+### 10.3 Vérification de la VM Services
 
 ```powershell
 # Depuis Windows — vérifier les conteneurs Docker
@@ -756,15 +813,17 @@ curl -s -o /dev/null -w '%{http_code}' http://localhost:8081     # Nexus → 200
 
 # Vérifier NFS
 showmount -e localhost
-# → /srv/nfs/mysql-data et /srv/nfs/jenkins-data visibles
+# → /srv/nfs/mysql-data, /srv/nfs/jenkins-data et /srv/nfs/todo-postgres-data visibles
 ```
 
 **Accès depuis le navigateur (machine hôte) :**
 - Gitea : `http://192.168.56.20:3000`
 - Nexus : `http://192.168.56.20:8081`
 - Jenkins : `http://192.168.56.10:30080`
+- Todo frontend, si déployé manuellement : `http://192.168.56.10:30081`
+- Todo API, si déployée manuellement : `http://192.168.56.10:30082/api/health`
 
-### 9.4 Vérification de Jenkins dans le cluster
+### 10.4 Vérification de Jenkins dans le cluster
 
 ```bash
 # Depuis le master
@@ -782,12 +841,12 @@ kubectl -n jenkins exec deploy/jenkins -- cat /var/jenkins_home/secrets/initialA
 - `pvc/jenkins-home` en `Bound`
 - `curl .../login` retourne `200`
 
-### 9.5 Checklist de Santé
+### 10.5 Checklist de Santé
 
 | # | Vérification | Commande | Résultat Attendu |
 |---|-------------|----------|-------------------|
 | 1 | Noeuds Ready | `kubectl get nodes` | 3 noeuds Ready |
-| 2 | Pods système | `kubectl get pods -A` | 12 pods Running |
+| 2 | Pods système + Jenkins | `kubectl get pods -A` | Pods système et Jenkins Running |
 | 3 | Déploiement | `kubectl create deployment test --image=nginx:alpine` | Pod Running |
 | 4 | DNS interne | `nslookup kubernetes.default.svc.cluster.local` | Résolution OK |
 | 5 | Service réseau | `curl http://service-name` | HTTP 200 |
@@ -795,11 +854,12 @@ kubectl -n jenkins exec deploy/jenkins -- cat /var/jenkins_home/secrets/initialA
 | 7 | Gitea | `curl http://192.168.56.20:3000` | HTTP 200 |
 | 8 | Nexus | `curl http://192.168.56.20:8081` | HTTP 200 |
 | 9 | Jenkins | `curl http://192.168.56.10:30080/login` | HTTP 200 |
-| 10 | NFS exports | `showmount -e 192.168.56.20` | `/srv/nfs/mysql-data` et `/srv/nfs/jenkins-data` visibles |
+| 10 | NFS exports | `showmount -e 192.168.56.20` | Exports `mysql-data`, `jenkins-data`, `todo-postgres-data` visibles |
+| 11 | Todo app optionnelle | `kubectl get pods -n todo-app` | Pods Running si l'app a été déployée manuellement |
 
 ---
 
-## 10. Dépannage (Troubleshooting)
+## 11. Dépannage (Troubleshooting)
 
 ### Problème : Un noeud est "NotReady"
 
@@ -963,6 +1023,10 @@ vagrant ssh k8s-master -c "kubectl get nodes"
 │    http://192.168.56.10:30080 → Jenkins (NodePort)           │
 │    kubectl -n jenkins get pods,svc,pvc → État Jenkins        │
 │                                                              │
+│  APPLICATION TODO (OPTIONNELLE) :                             │
+│    http://192.168.56.10:30081 → Frontend todo                 │
+│    http://192.168.56.10:30082/api/health → API todo           │
+│                                                              │
 │  VÉRIFICATION RAPIDE :                                       │
 │    vagrant ssh k8s-master -c "kubectl get nodes"             │
 │    vagrant ssh k8s-master -c "kubectl get pods -A"           │
@@ -971,4 +1035,3 @@ vagrant ssh k8s-master -c "kubectl get nodes"
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
 ```
-vagrant ssh services -c "cd /home/vagrant/ansible && ANSIBLE_HOST_KEY_CHECKING=false ansible-playbook -i inventory.ini playbook.yml --become -v" 2>&1

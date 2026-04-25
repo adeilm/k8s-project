@@ -1,116 +1,129 @@
-# Kubernetes Cluster — Local Development Environment with CI/CD
+# Kubernetes Cluster — Local DevOps Lab
 
 ## Overview
 
-A fully automated **self-hosted DevOps platform** provisioned locally with **Vagrant** and **Ansible**: a production-style Kubernetes cluster wired to a complete CI/CD stack (Gitea + Jenkins + Nexus).
+This project provisions a local, Vagrant-based Kubernetes lab with a supporting services VM. The infrastructure is managed by Ansible and is intended for local development, Kubernetes practice, and CI/CD experiments.
 
-Every piece runs on your laptop. Every piece is configured declaratively. A `git push` triggers a full build/push/deploy cycle with zero human intervention.
+The current Ansible playbook builds:
 
-### Infrastructure
+- A 3-node Kubernetes cluster: 1 control plane and 2 workers.
+- `containerd` as the Kubernetes container runtime.
+- Flannel CNI using the host-only Vagrant network.
+- A services VM running NFS, Docker, Gitea, and Nexus.
+- Jenkins deployed inside Kubernetes with persistent storage backed by NFS.
+
+## Infrastructure
 
 | Node | Hostname | IP | CPU | RAM | Role |
 |------|----------|----|-----|-----|------|
-| Master | k8s-master | 192.168.56.10 | 2 | 4 GB | Kubernetes control plane |
-| Worker 1 | k8s-worker1 | 192.168.56.11 | 2 | 2 GB | Workload node |
-| Worker 2 | k8s-worker2 | 192.168.56.12 | 2 | 2 GB | Workload node |
-| Services | services | 192.168.56.20 | 2 | 4 GB | NFS + Gitea + Nexus + Jenkins |
+| Master | `k8s-master` | `192.168.56.10` | 2 | 4 GB | Kubernetes control plane |
+| Worker 1 | `k8s-worker1` | `192.168.56.11` | 2 | 2 GB | Workload node |
+| Worker 2 | `k8s-worker2` | `192.168.56.12` | 2 | 2 GB | Workload node |
+| Services | `services` | `192.168.56.20` | 2 | 4 GB | Ansible runner, NFS, Docker, Gitea, Nexus |
 
-**Stack:** Ubuntu 22.04 · Kubernetes 1.29.2 · containerd · Flannel CNI · kubeadm · Docker CE · Gitea · Nexus 3 · Jenkins LTS
-
----
-
-## The CI/CD Pipeline
-
-This is the centerpiece of the project. End-to-end:
-
-```
-Developer: git push origin main
-               │
-               ▼
-           ┌───────┐   webhook    ┌─────────┐
-           │ Gitea │ ───────────▶ │ Jenkins │
-           └───────┘              └────┬────┘
-                                       │
-                            ┌──────────┼──────────┐
-                            ▼          ▼          ▼
-                       docker     docker push   kubectl
-                        build        to Nexus    set image
-                                       │          │
-                                       ▼          ▼
-                                  ┌───────┐  ┌──────────────┐
-                                  │ Nexus │  │ K8s API      │
-                                  └───┬───┘  └──────┬───────┘
-                                      │             │
-                                      │  pull new   │ rolling
-                                      │  image      │ update
-                                      ▼             ▼
-                              ┌─────────────────────────┐
-                              │   Worker pods get       │
-                              │   replaced one by one   │
-                              │   (zero downtime)       │
-                              └─────────────────────────┘
-```
-
-### What each tool does
-
-| Tool | Role | Where | URL |
-|------|------|-------|-----|
-| **Gitea** | Self-hosted Git server — source of truth | services VM | http://192.168.56.20:3000 |
-| **Jenkins** | Automation engine — orchestrates the pipeline | services VM | http://192.168.56.20:8080 |
-| **Nexus** | Artifact repository — private Docker registry | services VM | http://192.168.56.20:8081 |
-| **Nexus Docker endpoint** | Push/pull target for container images | services VM | `192.168.56.20:8082` |
-| **Kubernetes** | Runtime — actually runs the application | master + 2 workers | API `192.168.56.10:6443` |
-
-### Demo app: `hello-world`
-
-Deployed application at **http://192.168.56.10:30080** — an nginx pod serving HTML built from source. Change the HTML, push, and the page updates within ~90 seconds automatically.
-
----
+**Stack:** Ubuntu 22.04, Kubernetes `1.29.2`, kubeadm, kubelet, kubectl, containerd, Flannel, Docker CE, Gitea, Nexus 3, Jenkins LTS.
 
 ## Prerequisites
 
-- [Vagrant](https://www.vagrantup.com/downloads) (>= 2.3)
-- [VirtualBox](https://www.virtualbox.org/wiki/Downloads) (>= 7.0)
-- [Ansible](https://docs.ansible.com/ansible/latest/installation_guide/) (>= 2.14)
-- ~16 GB RAM free on host (4 VMs total ≈ 12 GB allocated + host overhead)
+- Vagrant 2.3 or newer.
+- VirtualBox 7.0 or newer.
+- Around 16 GB RAM available on the host.
 
-> **Windows users:** Ansible runs on the host via Vagrant's Ansible provisioner. Git Bash or WSL recommended.
+Ansible does not need to be installed on the Windows host. The Vagrantfile installs and runs Ansible from the `services` VM.
 
----
+## Provisioned Services
+
+| Service | Where it runs | Access | Notes |
+|---------|---------------|--------|-------|
+| Gitea | Docker on `services` VM | `http://192.168.56.20:3000` | Self-hosted Git server |
+| Gitea SSH | Docker on `services` VM | `192.168.56.20:2222` | SSH access to Git repositories |
+| Nexus UI | Docker on `services` VM | `http://192.168.56.20:8081` | Artifact repository |
+| Nexus Docker registry | Docker on `services` VM | `192.168.56.20:8082` | Private Docker registry endpoint |
+| NFS | `services` VM | `192.168.56.20:/srv/nfs/*` | Persistent storage for Kubernetes workloads |
+| Jenkins | Kubernetes namespace `jenkins` | `http://192.168.56.10:30080` | NodePort service backed by NFS storage |
+
+## Included Applications
+
+| Path | What it contains | Current access/ports | Notes |
+|------|------------------|----------------------|-------|
+| `apps/todo` | Frontend, Express API, PostgreSQL manifests | Frontend NodePort `30081`, API NodePort `30082` | Example app, not deployed by Ansible |
+| `k8s-apps/hello-world` | nginx Deployment using a ConfigMap for HTML | NodePort `30080` | Conflicts with Jenkins unless the port is changed |
+| `k8s-apps/hello-world-v2` | nginx Deployment using image `192.168.56.20:8082/hello-world:1` | NodePort `30080` | Also conflicts with Jenkins unless the port is changed |
+
+The todo app stores PostgreSQL data on the NFS export `/srv/nfs/todo-postgres-data`. Its Kubernetes manifests use local images named `todo-frontend:local` and `todo-backend:local` with `imagePullPolicy: Never`, so those images must exist in the target node runtime or be changed to images pushed to Nexus.
 
 ## Project Structure
 
-```
+```text
 k8s-project/
-├── Vagrantfile                     # VM definitions & Ansible provisioner
-├── docs/
-│   ├── kubernetes-guide-tunisien.tex   # 87-page K8s learning guide (Tunisian dialect)
-│   └── kubernetes-guide-tunisien.pdf
-├── k8s-apps/                       # Kubernetes manifests for demo apps
-│   ├── hello-world/                # Original ConfigMap-based version
-│   └── hello-world-v2/             # Image-based version (managed by Jenkins)
+├── Vagrantfile
+├── README.md
+├── DOCUMENTATION.md
 ├── ansible/
 │   ├── inventory.ini
-│   ├── group_vars/all.yml          # kube_version, master_ip, pod CIDR, ports
-│   ├── roles/
-│   │   ├── common/                 # swap, kernel modules, sysctl, packages
-│   │   ├── containerd/             # runtime + insecure Nexus registry config
-│   │   ├── kubernetes/             # kubeadm, kubelet, kubectl (pinned)
-│   │   ├── master/                 # kubeadm init + kube-proxy ConfigMap fix
-│   │   ├── workers/                # kubeadm join
-│   │   ├── cni/                    # Flannel with dual-NIC fix
-│   │   ├── nfs/                    # NFS server + exports
-│   │   ├── docker/                 # Docker CE for services VM
-│   │   ├── gitea/                  # Git server (Docker Compose)
-│   │   ├── nexus/                  # Artifact registry (Docker Compose)
-│   │   └── jenkins/                # CI/CD server (Docker Compose)
-│   └── playbook.yml
-└── README.md
+│   ├── playbook.yml
+│   ├── group_vars/
+│   │   └── all.yml
+│   └── roles/
+│       ├── common/
+│       ├── containerd/
+│       ├── kubernetes/
+│       ├── master/
+│       ├── workers/
+│       ├── cni/
+│       ├── nfs/
+│       ├── docker/
+│       ├── gitea/
+│       ├── nexus/
+│       └── jenkins/
+├── apps/
+│   └── todo/
+│       ├── backend/                  # Node.js/Express API, PostgreSQL client
+│       ├── frontend/                 # nginx-served static UI
+│       └── k8s/                      # Namespace, Postgres, frontend, backend manifests
+├── docs/
+│   └── kubernetes-guide-tunisien.*
+└── k8s-apps/
+    ├── hello-world/                  # ConfigMap-backed nginx example
+    └── hello-world-v2/               # Nexus image-backed nginx example
 ```
 
----
+## Ansible Flow
 
-## Quick Start — Bring Up the Whole Cluster
+The main playbook runs these stages:
+
+1. Prepare Kubernetes nodes with swap disabled, kernel modules, sysctl settings, common packages, and `/etc/hosts` entries.
+2. Install and configure `containerd` on Kubernetes nodes.
+3. Install pinned Kubernetes packages: `kubelet`, `kubeadm`, and `kubectl` version `1.29.2-1.1`.
+4. Initialize the control plane on `k8s-master`.
+5. Patch kube-proxy to use the host-only master IP.
+6. Install Flannel CNI and force `--iface=enp0s8`.
+7. Join `k8s-worker1` and `k8s-worker2` to the cluster.
+8. Prepare the `services` VM.
+9. Deploy NFS, Docker, Gitea, and Nexus on the `services` VM.
+10. Deploy Jenkins inside Kubernetes.
+11. Validate nodes, pods, and Jenkins resources.
+
+## Important Variables
+
+| Variable | Value | Purpose |
+|----------|-------|---------|
+| `kube_version` | `1.29.2-1.1` | Pinned Kubernetes package version |
+| `kube_major_version` | `1.29` | Kubernetes apt repository branch |
+| `pod_network_cidr` | `10.244.0.0/16` | Flannel pod network |
+| `master_ip` | `192.168.56.10` | API server advertise address |
+| `services_ip` | `192.168.56.20` | Services VM address |
+| `jenkins_namespace` | `jenkins` | Jenkins Kubernetes namespace |
+| `jenkins_nodeport` | `30080` | Jenkins browser access port |
+| `jenkins_nfs_path` | `/srv/nfs/jenkins-data` | Jenkins persistent storage |
+
+NFS exports created by Ansible:
+
+- `/srv/nfs/mysql-data`
+- `/srv/nfs/jenkins-data`
+- `/srv/nfs/todo-postgres-data`
+
+## Quick Start
 
 ### First-time provisioning
 
@@ -118,230 +131,139 @@ k8s-project/
 vagrant up
 ```
 
-This creates the 4 VMs and runs the full Ansible playbook (~30 min first time). Once complete you have:
+This creates the four VMs and runs the Ansible playbook from the `services` VM.
 
-- 3-node Kubernetes cluster, all Ready
-- Flannel CNI configured with correct host-only interface
-- Gitea / Nexus / Jenkins running as Docker containers on services VM
-- NFS server exporting `/srv/nfs/mysql-data`
-- Nexus Docker registry reachable as `192.168.56.20:8082`
-- Containerd on all nodes configured to pull from the insecure Nexus registry
-
-### Subsequent boots (cluster already provisioned)
+### Boot without re-provisioning
 
 ```bash
 vagrant up --no-provision
 ```
 
-Skips re-running Ansible. Just boots the VMs and lets systemd bring services back up (~3 min).
-
-### Verify cluster health
+### Re-run Ansible
 
 ```bash
-vagrant ssh k8s-master -c "kubectl get nodes"
-vagrant ssh k8s-master -c "kubectl get pods -A"
-vagrant ssh services -c "sudo docker ps"
+vagrant provision services
 ```
 
-Expected: 3 nodes `Ready`, all system pods `Running`, 3 service containers `Up`.
-
----
-
-## Deploy Your Own App via the Pipeline
-
-Once the cluster is up, you can use the pipeline to deploy your own app. Here's the recipe that powers the `hello-world` demo.
-
-### 1. Create a Gitea repo
-Navigate to http://192.168.56.20:3000 → `+` → New Repository → give it a name.
-
-### 2. Clone it locally
-```bash
-git clone http://admin@192.168.56.20:3000/admin/myapp.git
-cd myapp
-```
-
-### 3. Add three things to the repo
-
-**`Dockerfile`** — how to build your image:
-```dockerfile
-FROM nginx:alpine
-COPY index.html /usr/share/nginx/html/index.html
-```
-
-**`Jenkinsfile`** — declarative pipeline:
-```groovy
-pipeline {
-  agent any
-  environment {
-    REGISTRY = '192.168.56.20:8082'
-    IMAGE    = 'myapp'
-    TAG      = "${env.BUILD_NUMBER}"
-  }
-  stages {
-    stage('Checkout') { steps { checkout scm } }
-    stage('Build')    { steps { sh 'docker build -t ${REGISTRY}/${IMAGE}:${TAG} .' } }
-    stage('Push') {
-      steps {
-        withCredentials([usernamePassword(credentialsId: 'nexus-creds',
-                                          usernameVariable: 'U', passwordVariable: 'P')]) {
-          sh 'echo $P | docker login $REGISTRY -u $U --password-stdin'
-          sh 'docker push $REGISTRY/$IMAGE:$TAG'
-        }
-      }
-    }
-    stage('Deploy') {
-      steps {
-        withKubeConfig([credentialsId: 'kubeconfig']) {
-          retry(5) {
-            sleep 3
-            sh 'kubectl set image deployment/myapp nginx=${REGISTRY}/${IMAGE}:${TAG}'
-          }
-          sh 'kubectl rollout status deployment/myapp --timeout=60s || true'
-        }
-      }
-    }
-  }
-}
-```
-
-**`k8s/deployment.yaml` + `k8s/service.yaml`** — your Kubernetes manifests (with `image: 192.168.56.20:8082/myapp:1`).
-
-### 4. First-time manual deploy
-
-Build and push the initial image, then apply manifests:
+Or run it from the services VM:
 
 ```bash
-vagrant ssh services
-git clone http://admin@192.168.56.20:3000/admin/myapp.git
-cd myapp
-sudo docker build -t 192.168.56.20:8082/myapp:1 .
-echo 'adminadmin' | sudo docker login 192.168.56.20:8082 -u admin --password-stdin
-sudo docker push 192.168.56.20:8082/myapp:1
-exit
-
-# Apply manifests
-cat myapp/k8s/deployment.yaml | vagrant ssh k8s-master -c "kubectl apply -f -"
-cat myapp/k8s/service.yaml    | vagrant ssh k8s-master -c "kubectl apply -f -"
+vagrant ssh services -c "cd /home/vagrant/ansible && ANSIBLE_HOST_KEY_CHECKING=false ansible-playbook -i inventory.ini playbook.yml --become -v"
 ```
 
-### 5. Wire up Jenkins
-
-1. **Credentials** (Manage Jenkins → Credentials → System → Global):
-   - `nexus-creds` — username/password, admin/adminadmin
-   - `gitea-creds` — username/password, admin/adminadmin
-   - `kubeconfig` — secret file, upload `/etc/kubernetes/admin.conf` from master
-2. **New Pipeline job** pointing at the Gitea repo URL, `Jenkinsfile` as script path
-3. **Gitea webhook**: Repo Settings → Webhooks → Add Webhook → Gitea
-   - Target URL: `http://192.168.56.20:8080/gitea-webhook/post`
-   - Content type: `application/json`, Trigger: Push Events
-
-From now on: `git push` → auto-build → auto-deploy → page updates.
-
----
-
-## Key Design Decisions Explained
-
-### Why containerd, not Docker, inside the cluster
-Kubernetes 1.24 removed `dockershim`. Containerd is the lighter, CRI-native runtime. Docker is still used on the **services VM** to run Gitea/Nexus/Jenkins containers and to build images in Jenkins pipelines — two different jobs.
-
-### Why the kube-proxy ConfigMap patch
-`kubeadm init` generates kube-proxy's kubeconfig using the default-route interface (NAT 10.0.2.15 on Vagrant), not `--apiserver-advertise-address`. Without patching, kube-proxy can't reach the API, Flannel crashes, and workers stay NotReady. Patched automatically by the `master` role after init.
-
-### Why Flannel's `--iface=enp0s8`
-Vagrant VMs have two NICs: `enp0s3` (NAT, 10.0.2.15) and `enp0s8` (host-only, 192.168.56.x). Without forcing the host-only interface, Flannel picks the wrong one and pods on different nodes can't reach each other.
-
-### Why the Nexus registry is "insecure"
-No TLS on the registry for simplicity (local dev). Both Docker (on services VM) and containerd (on all K8s nodes) are configured to accept plain HTTP for `192.168.56.20:8082`:
-- `/etc/docker/daemon.json` → `insecure-registries`
-- `/etc/containerd/certs.d/192.168.56.20:8082/hosts.toml` → `skip_verify = true`
-
-### Why Nexus anonymous access is enabled
-K8s nodes need to pull images without authenticating. Enabling anonymous reads avoids the complexity of managing `imagePullSecrets` in every Deployment. Push still requires login.
-
-### Why Jenkins uses the host's Docker socket
-The Jenkins container has `/var/run/docker.sock` bind-mounted from the host. This lets Jenkins run `docker build` without Docker-in-Docker. Trade-off: Jenkins effectively has root access to the host's Docker — fine for isolated dev, NOT for shared production.
-
-### Why `retry(5)` in the Deploy stage
-Locally, the K8s API server can briefly become unreachable under resource pressure (4 VMs on one laptop). Retrying the `kubectl set image` command 5× with a short sleep masks these transient blips without hiding real failures.
-
----
-
-## Management Commands
+## Verification
 
 ```bash
-vagrant halt                     # Stop all VMs (preserve state)
-vagrant up --no-provision        # Boot VMs, skip Ansible
-vagrant provision                # Re-run Ansible against running VMs
-vagrant destroy -f               # Delete everything (irreversible)
-vagrant status                   # Show all VM states
-vagrant ssh <name>               # Shell into a specific VM
+vagrant ssh k8s-master -c "kubectl get nodes -o wide"
+vagrant ssh k8s-master -c "kubectl get pods -A -o wide"
+vagrant ssh k8s-master -c "kubectl -n jenkins get pods,svc,pvc"
+vagrant ssh services -c "docker ps"
+vagrant ssh services -c "showmount -e localhost"
 ```
 
----
+Expected state:
+
+- `k8s-master`, `k8s-worker1`, and `k8s-worker2` are `Ready`.
+- Core Kubernetes pods, Flannel pods, and kube-proxy pods are running.
+- Jenkins pod is running in the `jenkins` namespace.
+- Docker on the `services` VM runs `gitea` and `nexus`.
+- NFS exports include `mysql-data`, `jenkins-data`, and `todo-postgres-data`.
+
+## Browser Access
+
+- Gitea: `http://192.168.56.20:3000`
+- Nexus: `http://192.168.56.20:8081`
+- Jenkins: `http://192.168.56.10:30080`
+- Todo frontend, if manually deployed: `http://192.168.56.10:30081`
+- Todo API, if manually deployed: `http://192.168.56.10:30082/api/health`
+
+Note: the sample `k8s-apps/hello-world` services also use NodePort `30080`. With the current Ansible setup, that port belongs to Jenkins, so change the sample service NodePort before applying it to the cluster.
+
+## Manual Todo App Deployment Notes
+
+The todo app is present in the repo but is not part of `ansible/playbook.yml`.
+
+```bash
+kubectl apply -f apps/todo/k8s/namespace.yml
+kubectl apply -f apps/todo/k8s/postgres.yml
+kubectl apply -f apps/todo/k8s/backend.yml
+kubectl apply -f apps/todo/k8s/frontend.yml
+```
+
+Before applying the backend and frontend manifests, either build/import the `todo-backend:local` and `todo-frontend:local` images into the Kubernetes node runtime, or change the manifest images to tags pushed to the Nexus Docker registry.
+
+## Manual CI/CD Setup
+
+The infrastructure is automated, but application-specific CI/CD wiring is still manual:
+
+1. Finish the first-run setup for Gitea, Nexus, and Jenkins.
+2. Create the required Jenkins plugins and credentials.
+3. Create a Gitea repository for your app.
+4. Add a `Jenkinsfile` and Kubernetes manifests to that repo.
+5. Configure a Jenkins Pipeline job.
+6. Add a Gitea webhook pointing to Jenkins.
+
+Useful credentials commonly created in Jenkins:
+
+- Nexus username/password for image pushes.
+- Gitea username/password or token for repository checkout.
+- Kubernetes kubeconfig from `/etc/kubernetes/admin.conf` on `k8s-master`.
+
+## Design Notes
+
+### Why containerd on Kubernetes nodes
+
+Kubernetes uses `containerd` directly through CRI. Docker is installed only on the `services` VM for Gitea and Nexus containers, and for local image-build experiments.
+
+### Why Flannel uses `enp0s8`
+
+Each Vagrant VM has a NAT interface and a host-only interface. Flannel must use the host-only `192.168.56.0/24` network, so the CNI manifest is patched with `--iface=enp0s8`.
+
+### Why kube-proxy is patched
+
+On Vagrant, kubeadm can generate kube-proxy configuration pointing at the NAT address. The `master` role patches kube-proxy to use `https://192.168.56.10:6443`.
+
+### Why Jenkins uses NFS
+
+Jenkins runs as a Kubernetes Deployment. Its home directory is stored on an NFS-backed PersistentVolume at `/srv/nfs/jenkins-data`, so the data survives pod restarts.
 
 ## Troubleshooting
 
-### Node shows `NotReady` after boot
-Transient containerd/PLEG hang — very common after `vagrant halt; vagrant up`. Restart the runtime:
+### Node shows `NotReady`
 
 ```bash
 vagrant ssh <node> -c "sudo systemctl restart containerd kubelet"
+vagrant ssh k8s-master -c "kubectl get nodes"
 ```
 
-Node flips Ready within ~30 seconds.
-
-### `VBoxManage: E_ACCESSDENIED`
-Orphan `<inaccessible>` VMs from other projects are confusing VirtualBox. Unregister them:
+### Gitea or Nexus is not responding
 
 ```bash
-"/c/Program Files/Oracle/VirtualBox/VBoxManage.exe" list vms
-# Find the <inaccessible> UUIDs, then for each:
-"/c/Program Files/Oracle/VirtualBox/VBoxManage.exe" unregistervm <UUID>
+vagrant ssh services
+docker ps -a
+docker logs gitea
+docker logs nexus
 ```
 
-`unregistervm` doesn't delete VM files on disk — only removes them from VirtualBox's registry.
-
-### Pipeline fails at `Deploy` with "TLS handshake timeout"
-API server is under pressure. Either:
-1. Wait 30 seconds and click **Build Now** again, OR
-2. Restart control plane runtime: `vagrant ssh k8s-master -c "sudo systemctl restart containerd kubelet"`
-
-### Can't push to Nexus: "http: server gave HTTP response to HTTPS client"
-Docker (or containerd) isn't configured for the insecure registry. On the affected machine:
+### Jenkins is not responding
 
 ```bash
-# Docker
-sudo bash -c 'echo "{\"insecure-registries\": [\"192.168.56.20:8082\"]}" > /etc/docker/daemon.json'
-sudo systemctl restart docker
-
-# Containerd
-sudo mkdir -p /etc/containerd/certs.d/192.168.56.20:8082
-# (populate hosts.toml with skip_verify=true, restart containerd)
+vagrant ssh k8s-master
+kubectl -n jenkins get pods,svc,pvc
+kubectl -n jenkins describe pod -l app=jenkins
+kubectl -n jenkins logs deploy/jenkins
 ```
 
-### Gitea repo is hidden after first-run wizard
-Gitea's first-run wizard takes ~30 seconds to write config. If you refresh too fast, you may see a blank page. Wait, then go to http://192.168.56.20:3000 and log in.
+### NFS exports are missing
 
----
-
-## What's NOT Automated (Intentionally Manual)
-
-These are one-time UI steps — kept out of the playbook because they're tied to personal accounts:
-
-1. Gitea first-run wizard (creates admin user, picks DB)
-2. Nexus initial password change
-3. Jenkins initial admin user creation
-4. Jenkins plugin installation
-5. Jenkins credential creation
-6. Creating Gitea webhooks on specific repos
-
-Everything below this line (VMs, networking, K8s, container runtimes, apt repos, service containers) is 100% Ansible-managed.
-
----
+```bash
+vagrant ssh services -c "showmount -e localhost"
+vagrant provision services
+```
 
 ## Further Reading
 
-- Full Kubernetes concepts guide in Tunisian dialect: [docs/kubernetes-guide-tunisien.pdf](docs/kubernetes-guide-tunisien.pdf) (87 pages)
+- Full Kubernetes guide in Tunisian dialect: [docs/kubernetes-guide-tunisien.pdf](docs/kubernetes-guide-tunisien.pdf)
 - Official Kubernetes docs: https://kubernetes.io/docs/
-- Jenkins pipeline syntax: https://www.jenkins.io/doc/book/pipeline/syntax/
+- Jenkins Pipeline syntax: https://www.jenkins.io/doc/book/pipeline/syntax/
 - Gitea webhook docs: https://docs.gitea.com/usage/webhooks
