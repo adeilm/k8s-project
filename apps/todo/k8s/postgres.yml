@@ -56,7 +56,7 @@ spec:
             - name: POSTGRES_USER
               value: todo
             - name: POSTGRES_PASSWORD
-              value: todo
+              value: admin
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
           volumeMounts:

@@ -46,6 +46,36 @@
     replace: 'sandbox_image = "registry.k8s.io/pause:3.9"'
   notify: Restart containerd
 
+# ---------- 4c. Trust the local Nexus Docker registry over HTTP ---------------
+- name: Enable containerd registry hosts directory
+  ansible.builtin.replace:
+    path: /etc/containerd/config.toml
+    regexp: '(^\s*)config_path\s*=\s*""'
+    replace: '\1config_path = "/etc/containerd/certs.d"'
+  notify: Restart containerd
+
+- name: Create Nexus registry config directory
+  ansible.builtin.file:
+    path: "/etc/containerd/certs.d/{{ services_ip }}:{{ nexus_docker_port }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Configure containerd to pull from Nexus registry
+  ansible.builtin.copy:
+    dest: "/etc/containerd/certs.d/{{ services_ip }}:{{ nexus_docker_port }}/hosts.toml"
+    content: |
+      server = "http://{{ services_ip }}:{{ nexus_docker_port }}"
+
+      [host."http://{{ services_ip }}:{{ nexus_docker_port }}"]
+        capabilities = ["pull", "resolve"]
+        skip_verify = true
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart containerd
+
 # ---------- 5. Enable and start containerd service ----------------------------
 - name: Enable and start containerd
   ansible.builtin.systemd:

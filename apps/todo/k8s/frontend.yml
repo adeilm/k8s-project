@@ -13,10 +13,12 @@ spec:
       labels:
         app: todo-frontend
     spec:
+      imagePullSecrets:
+        - name: nexus-registry-creds
       containers:
         - name: todo-frontend
-          image: todo-frontend:local
-          imagePullPolicy: Never
+          image: 192.168.56.20:8082/todo-frontend:1
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 80
 ---

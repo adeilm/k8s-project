@@ -13,17 +13,19 @@ spec:
       labels:
         app: todo-backend
     spec:
+      imagePullSecrets:
+        - name: nexus-registry-creds
       containers:
         - name: todo-backend
-          image: todo-backend:local
-          imagePullPolicy: Never
+          image: 192.168.56.20:8082/todo-backend:1
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3000
           env:
             - name: PORT
               value: "3000"
             - name: DATABASE_URL
-              value: postgres://todo:todo@postgres:5432/todoapp
+              value: postgres://todo:admin@postgres:5432/todoapp
 ---
 apiVersion: v1
 kind: Service

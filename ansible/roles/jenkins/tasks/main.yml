@@ -26,6 +26,24 @@
   register: jenkins_apply
   changed_when: "'created' in jenkins_apply.stdout or 'configured' in jenkins_apply.stdout"
 
+# ---------- 2b. Nexus registry pull secret -----------------------------------
+# Required by:
+#   - Kaniko in Jenkinsfiles (mounted as /kaniko/.docker/config.json)
+#   - imagePullSecrets in todo-app Deployments
+- name: Create nexus-registry-creds Secret in jenkins and todo-app namespaces
+  ansible.builtin.shell: |
+    kubectl -n {{ item }} create secret docker-registry nexus-registry-creds \
+      --docker-server={{ services_ip }}:{{ nexus_docker_port }} \
+      --docker-username={{ nexus_admin_user }} \
+      --docker-password={{ nexus_admin_password }} \
+      --dry-run=client -o yaml | kubectl apply -f -
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  loop:
+    - "{{ jenkins_namespace }}"
+    - "{{ todo_namespace }}"
+  changed_when: false
+
 # ---------- 3. Wait for the Deployment rollout --------------------------------
 - name: Wait for Jenkins deployment rollout
   ansible.builtin.command:

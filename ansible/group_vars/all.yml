@@ -66,6 +66,8 @@ gitea_data_dir: "/opt/gitea"
 nexus_http_port: 8081
 nexus_docker_port: 8082
 nexus_data_dir: "/opt/nexus"
+nexus_admin_user: "admin"
+nexus_admin_password: "adminadmin"
 
 # ---------- Jenkins (CI/CD server) -------------------------------------------
 jenkins_http_port: 8080
@@ -73,3 +75,6 @@ jenkins_namespace: "jenkins"
 jenkins_nodeport: 30080
 jenkins_storage_size: "8Gi"
 jenkins_nfs_path: "/srv/nfs/jenkins-data"
+
+# ---------- Todo application -------------------------------------------------
+todo_namespace: "todo-app"

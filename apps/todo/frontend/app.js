@@ -62,7 +62,7 @@ function renderTodos(todos) {
     checkbox.addEventListener("change", async () => {
       try {
         setStatus("Updating task...");
-        await request(`/${todo.id}`, {
+        await request(`/todos/${todo.id}`, {
           method: "PATCH",
           body: JSON.stringify({ completed: checkbox.checked }),
         });
@@ -86,7 +86,7 @@ function renderTodos(todos) {
     deleteButton.addEventListener("click", async () => {
       try {
         setStatus("Deleting task...");
-        await request(`/${todo.id}`, { method: "DELETE" });
+        await request(`/todos/${todo.id}`, { method: "DELETE" });
         await loadTodos();
         setStatus("Task deleted.");
       } catch (error) {
