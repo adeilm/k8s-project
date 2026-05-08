@@ -46,11 +46,9 @@ Ansible does not need to be installed on the Windows host. The Vagrantfile insta
 
 | Path | What it contains | Current access/ports | Notes |
 |------|------------------|----------------------|-------|
-| `apps/todo` | Frontend, Express API, PostgreSQL manifests | Frontend NodePort `30081`, API NodePort `30082` | Example app, not deployed by Ansible |
-| `k8s-apps/hello-world` | nginx Deployment using a ConfigMap for HTML | NodePort `30080` | Conflicts with Jenkins unless the port is changed |
-| `k8s-apps/hello-world-v2` | nginx Deployment using image `192.168.56.20:8082/hello-world:1` | NodePort `30080` | Also conflicts with Jenkins unless the port is changed |
+| `apps/todo` | Frontend, Express API, PostgreSQL manifests | Frontend NodePort `30081`, API NodePort `30082` | Source code lives in two Gitea repos (`admin/todo-frontend`, `admin/todo-backend`); Jenkins builds images and pushes them to Nexus; this folder holds the matching Kubernetes manifests |
 
-The todo app stores PostgreSQL data on the NFS export `/srv/nfs/todo-postgres-data`. Its Kubernetes manifests use local images named `todo-frontend:local` and `todo-backend:local` with `imagePullPolicy: Never`, so those images must exist in the target node runtime or be changed to images pushed to Nexus.
+The todo app stores PostgreSQL data on the NFS export `/srv/nfs/todo-postgres-data`. Its manifests reference images on the Nexus registry (`192.168.56.20:8082/todo-frontend:<tag>` and `192.168.56.20:8082/todo-backend:<tag>`). Image pulls authenticate via the `nexus-registry-creds` Secret (created automatically by the `jenkins` Ansible role) and the deployments declare it through `imagePullSecrets`.
 
 ## Project Structure
 
@@ -58,7 +56,8 @@ The todo app stores PostgreSQL data on the NFS export `/srv/nfs/todo-postgres-da
 k8s-project/
 ├── Vagrantfile
 ├── README.md
-├── DOCUMENTATION.md
+├── REVISION.md                       # Single-page study aid for the oral defense
+├── DOCUMENTATION.md                  # Long-form technical reference (FR)
 ├── ansible/
 │   ├── inventory.ini
 │   ├── playbook.yml
@@ -81,11 +80,8 @@ k8s-project/
 │       ├── backend/                  # Node.js/Express API, PostgreSQL client
 │       ├── frontend/                 # nginx-served static UI
 │       └── k8s/                      # Namespace, Postgres, frontend, backend manifests
-├── docs/
-│   └── kubernetes-guide-tunisien.*
-└── k8s-apps/
-    ├── hello-world/                  # ConfigMap-backed nginx example
-    └── hello-world-v2/               # Nexus image-backed nginx example
+└── docs/
+    └── kubernetes-guide-tunisien.*   # Tunisian-dialect Kubernetes learning guide
 ```
 
 ## Ansible Flow
@@ -177,8 +173,6 @@ Expected state:
 - Todo frontend, if manually deployed: `http://192.168.56.10:30081`
 - Todo API, if manually deployed: `http://192.168.56.10:30082/api/health`
 
-Note: the sample `k8s-apps/hello-world` services also use NodePort `30080`. With the current Ansible setup, that port belongs to Jenkins, so change the sample service NodePort before applying it to the cluster.
-
 ## Manual Todo App Deployment Notes
 
 The todo app is present in the repo but is not part of `ansible/playbook.yml`.
@@ -190,7 +184,7 @@ kubectl apply -f apps/todo/k8s/backend.yml
 kubectl apply -f apps/todo/k8s/frontend.yml
 ```
 
-Before applying the backend and frontend manifests, either build/import the `todo-backend:local` and `todo-frontend:local` images into the Kubernetes node runtime, or change the manifest images to tags pushed to the Nexus Docker registry.
+The backend and frontend manifests reference images on the Nexus registry (`192.168.56.20:8082/todo-backend:<tag>`, `192.168.56.20:8082/todo-frontend:<tag>`). Before the first manual apply you need either an initial Jenkins pipeline run that pushes a tag, or a one-off manual `docker build` + `docker push` against Nexus. Image pulls authenticate via the `nexus-registry-creds` Secret created in `todo-app` by the `jenkins` Ansible role.
 
 ## Manual CI/CD Setup
 
