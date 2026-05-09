@@ -37,6 +37,27 @@
   when: not kubeadm_init_check.stat.exists
   changed_when: true
 
+# ---------- 2c. Patch CoreDNS for external DNS + IPv4-only ---------------------
+# Two fixes baked into one ConfigMap:
+#   1. forward . 8.8.8.8 1.1.1.1
+#      Default forwards to /etc/resolv.conf which on Ubuntu 22.04 points at the
+#      systemd-resolved stub 127.0.0.53 — unreachable from a Pod. Pods cannot
+#      resolve external hostnames (Docker Hub, etc.).
+#   2. template ANY AAAA . { rcode NOERROR }
+#      Cluster has no IPv6 routing (Flannel + Vagrant are IPv4-only). When DNS
+#      returns AAAA records, Go-based clients (Kaniko) try IPv6 first and hang.
+#      Stripping AAAA forces every lookup to use IPv4.
+- name: Patch CoreDNS Corefile (external DNS + drop AAAA)
+  ansible.builtin.shell: |
+    kubectl -n kube-system create configmap coredns \
+      --from-literal=Corefile="$(printf '.:53 {\n    errors\n    health {\n       lameduck 5s\n    }\n    ready\n    kubernetes cluster.local in-addr.arpa ip6.arpa {\n       pods insecure\n       fallthrough in-addr.arpa ip6.arpa\n       ttl 30\n    }\n    template ANY AAAA . {\n       rcode NOERROR\n    }\n    prometheus :9153\n    forward . 8.8.8.8 1.1.1.1 {\n       max_concurrent 1000\n    }\n    cache 30\n    loop\n    reload\n    loadbalance\n}\n')" \
+      --dry-run=client -o yaml | kubectl apply -f -
+    kubectl -n kube-system rollout restart deploy/coredns
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  when: not kubeadm_init_check.stat.exists
+  changed_when: true
+
 # ---------- 3. Configure kubectl for the vagrant user -------------------------
 - name: Create .kube directory for vagrant user
   ansible.builtin.file:

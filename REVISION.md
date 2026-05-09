@@ -93,7 +93,7 @@ The Kubernetes manifests stay in this monorepo; the application source lives in 
      │ git push
      ▼
   Gitea (192.168.56.20:3000)
-     │ webhook POST → http://192.168.56.10:30080/github-webhook/
+     │ webhook POST → http://192.168.56.10:30080/gitea-webhook/post
      ▼
   Jenkins (in K8s, NodePort 30080)
      │ matches the SCM URL of the corresponding Pipeline job
@@ -162,6 +162,7 @@ The honest list — anticipate the professor asking "what didn't work the first 
 | 10 | NFS mount for the postgres Pod failed: "No such file or directory" | The export directory was missing on the services VM (older provision had only `mysql-data`) | `nfs_exports` in `group_vars/all.yml` now lists `mysql-data`, `jenkins-data`, `todo-postgres-data` — the role creates each directory and adds it to `/etc/exports` |
 | 11 | `nexus-registry-creds` Secret missing → Kaniko could not authenticate to Nexus | The secret is required both for Kaniko's docker-config mount and for `imagePullSecrets` in the app manifests | The Jenkins role creates the secret via `kubectl create secret docker-registry` in both namespaces |
 | 12 | Master Node intermittently flips to `NotReady` after `vagrant halt; vagrant up` | Containerd / kubelet PLEG hangs after VM suspend-resume on a resource-tight host | Documented workaround: `sudo systemctl restart containerd kubelet` on the affected node. Permanent fix would be increasing host RAM or moving Jenkins off NFS |
+| 13 | Kaniko hung during `nginx:1.27-alpine` pull with `i/o timeout` even after CoreDNS upstream fix | CoreDNS returned only AAAA (IPv6) records for some upstream lookups; cluster has no IPv6 routing (Flannel + Vagrant are IPv4-only), so Go's HTTP client tried IPv6 first and stalled | Added `template ANY AAAA . { rcode NOERROR }` to the CoreDNS Corefile so every external lookup returns IPv4 only. Now baked into the `master` Ansible role alongside the kube-proxy patch |
 
 ---
 
