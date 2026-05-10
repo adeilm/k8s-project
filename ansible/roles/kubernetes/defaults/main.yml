@@ -1,0 +1,6 @@
+# Role: kubernetes — default variables
+---
+kube_version: "1.29.2-1.1"
+kube_major_version: "1.29"
+kube_apt_key_url: "https://pkgs.k8s.io/core:/stable:/v{{ kube_major_version }}/deb/Release.key"
+kube_apt_repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v{{ kube_major_version }}/deb/ /"

@@ -1,9 +1,6 @@
 # =============================================================================
 # Role: master — Initialize the Kubernetes control plane
 # =============================================================================
-# Runs kubeadm init (only if not already initialized), configures kubectl for
-# the vagrant user, and extracts the worker join command for dynamic use.
-# =============================================================================
 ---
 
 # ---------- 1. Check if the cluster is already initialized --------------------
@@ -12,17 +9,40 @@
     path: /etc/kubernetes/admin.conf
   register: kubeadm_init_check
 
-# ---------- 2. Initialize the control plane -----------------------------------
+# ---------- 2. Write kubeadm config file --------------------------------------
+# Using a config file instead of CLI flags lets us set kubeletExtraArgs.
+# resolv-conf fix: Ubuntu 22.04 systemd-resolved puts a stub at 127.0.0.53
+# that Pods cannot reach. /run/systemd/resolve/resolv.conf is the REAL file
+# with actual upstream DNS — kubelet passes this to CoreDNS at init time.
+# This is the PROPER fix. No CoreDNS patching needed for external DNS.
+- name: Write kubeadm config file
+  ansible.builtin.copy:
+    dest: /tmp/kubeadm-config.yaml
+    content: |
+      apiVersion: kubeadm.k8s.io/v1beta3
+      kind: ClusterConfiguration
+      networking:
+        podSubnet: "{{ pod_network_cidr }}"
+      ---
+      apiVersion: kubeadm.k8s.io/v1beta3
+      kind: InitConfiguration
+      localAPIEndpoint:
+        advertiseAddress: "{{ master_ip }}"
+      nodeRegistration:
+        name: "{{ inventory_hostname }}"
+        kubeletExtraArgs:
+          resolv-conf: /run/systemd/resolve/resolv.conf
+    mode: "0644"
+  when: not kubeadm_init_check.stat.exists
+
+# ---------- 3. Initialize the control plane -----------------------------------
+# Now uses --config instead of inline flags.
 - name: Run kubeadm init
-  ansible.builtin.command: >
-    kubeadm init
-    --apiserver-advertise-address={{ master_ip }}
-    --pod-network-cidr={{ pod_network_cidr }}
-    --node-name={{ inventory_hostname }}
+  ansible.builtin.command: kubeadm init --config /tmp/kubeadm-config.yaml
   when: not kubeadm_init_check.stat.exists
   register: kubeadm_init_result
 
-# ---------- 2b. Patch kube-proxy to use host-only IP (dual-NIC fix) -----------
+# ---------- 3b. Patch kube-proxy to use host-only IP (dual-NIC fix) ----------
 # kubeadm generates kube-proxy's kubeconfig using the default-route interface
 # (10.0.2.15 on Vagrant NAT), not --apiserver-advertise-address. Without this,
 # kube-proxy can't reach the API, Flannel crashes, and workers stay NotReady.
@@ -37,20 +57,18 @@
   when: not kubeadm_init_check.stat.exists
   changed_when: true
 
-# ---------- 2c. Patch CoreDNS for external DNS + IPv4-only ---------------------
-# Two fixes baked into one ConfigMap:
-#   1. forward . 8.8.8.8 1.1.1.1
-#      Default forwards to /etc/resolv.conf which on Ubuntu 22.04 points at the
-#      systemd-resolved stub 127.0.0.53 — unreachable from a Pod. Pods cannot
-#      resolve external hostnames (Docker Hub, etc.).
-#   2. template ANY AAAA . { rcode NOERROR }
-#      Cluster has no IPv6 routing (Flannel + Vagrant are IPv4-only). When DNS
-#      returns AAAA records, Go-based clients (Kaniko) try IPv6 first and hang.
-#      Stripping AAAA forces every lookup to use IPv4.
-- name: Patch CoreDNS Corefile (external DNS + drop AAAA)
+# ---------- 3c. Drop AAAA records in CoreDNS (IPv4-only cluster) -------------
+# This cluster has no IPv6 routing (Flannel + Vagrant = IPv4 only).
+# When DNS returns AAAA records, Go clients (Kaniko) try IPv6 first and hang.
+# Dropping AAAA forces every lookup to IPv4.
+#
+# NOTE: We no longer patch "forward" here. The resolv-conf fix in kubeadm
+# config (step 2) already makes CoreDNS use the correct upstream DNS.
+# This task ONLY handles the IPv6 problem.
+- name: Patch CoreDNS Corefile (drop AAAA for IPv4-only cluster)
   ansible.builtin.shell: |
     kubectl -n kube-system create configmap coredns \
-      --from-literal=Corefile="$(printf '.:53 {\n    errors\n    health {\n       lameduck 5s\n    }\n    ready\n    kubernetes cluster.local in-addr.arpa ip6.arpa {\n       pods insecure\n       fallthrough in-addr.arpa ip6.arpa\n       ttl 30\n    }\n    template ANY AAAA . {\n       rcode NOERROR\n    }\n    prometheus :9153\n    forward . 8.8.8.8 1.1.1.1 {\n       max_concurrent 1000\n    }\n    cache 30\n    loop\n    reload\n    loadbalance\n}\n')" \
+      --from-literal=Corefile="$(printf '.:53 {\n    errors\n    health {\n       lameduck 5s\n    }\n    ready\n    kubernetes cluster.local in-addr.arpa ip6.arpa {\n       pods insecure\n       fallthrough in-addr.arpa ip6.arpa\n       ttl 30\n    }\n    template ANY AAAA . {\n       rcode NOERROR\n    }\n    prometheus :9153\n    forward . /etc/resolv.conf {\n       max_concurrent 1000\n    }\n    cache 30\n    loop\n    reload\n    loadbalance\n}\n')" \
       --dry-run=client -o yaml | kubectl apply -f -
     kubectl -n kube-system rollout restart deploy/coredns
   environment:
@@ -58,7 +76,7 @@
   when: not kubeadm_init_check.stat.exists
   changed_when: true
 
-# ---------- 3. Configure kubectl for the vagrant user -------------------------
+# ---------- 4. Configure kubectl for the vagrant user -------------------------
 - name: Create .kube directory for vagrant user
   ansible.builtin.file:
     path: /home/vagrant/.kube
@@ -76,7 +94,7 @@
     group: vagrant
     mode: "0600"
 
-# ---------- 4. Generate and store the join command ----------------------------
+# ---------- 5. Generate and store the join command ----------------------------
 - name: Generate cluster join command
   ansible.builtin.command: kubeadm token create --print-join-command
   register: join_command_result
@@ -86,7 +104,7 @@
   ansible.builtin.set_fact:
     kube_join_command: "{{ join_command_result.stdout }}"
 
-# ---------- 5. Debug — print join command (for verification) ------------------
+# ---------- 6. Debug — print join command (for verification) ------------------
 - name: Display join command
   ansible.builtin.debug:
     msg: "{{ kube_join_command }}"

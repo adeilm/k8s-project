@@ -1,0 +1,69 @@
+# =============================================================================
+# Role: nginx-ingress — Deploy NGINX Ingress Controller via Helm
+# =============================================================================
+# Installs the ingress-nginx Helm chart to provide HTTP/HTTPS routing into
+# the cluster. Exposed via NodePort so the host can reach services through
+# a single entry point instead of per-service NodePorts.
+# =============================================================================
+---
+
+# ---------- 1. Add the ingress-nginx Helm repository -------------------------
+- name: Add ingress-nginx Helm repository
+  ansible.builtin.command: helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: ingress_repo_add
+  changed_when: "'has been added' in ingress_repo_add.stdout"
+  failed_when: false
+
+- name: Update Helm repositories
+  ansible.builtin.command: helm repo update
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  changed_when: false
+
+# ---------- 2. Check if already installed ------------------------------------
+- name: Check if ingress-nginx is already installed
+  ansible.builtin.command: helm status ingress-nginx -n {{ ingress_namespace }}
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: ingress_check
+  changed_when: false
+  failed_when: false
+
+# ---------- 3. Install the Ingress Controller --------------------------------
+- name: Install NGINX Ingress Controller
+  ansible.builtin.command: >
+    helm install ingress-nginx ingress-nginx/ingress-nginx
+    --namespace {{ ingress_namespace }}
+    --create-namespace
+    --set controller.service.type=NodePort
+    --set controller.service.nodePorts.http={{ ingress_http_nodeport }}
+    --set controller.service.nodePorts.https={{ ingress_https_nodeport }}
+    --set controller.admissionWebhooks.enabled=false
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  when: ingress_check.rc != 0
+  changed_when: true
+
+# ---------- 4. Wait for the controller pod to be ready -----------------------
+- name: Wait for Ingress Controller rollout
+  ansible.builtin.command: >
+    kubectl rollout status deployment/ingress-nginx-controller
+    --namespace {{ ingress_namespace }}
+    --timeout=300s
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  changed_when: false
+
+# ---------- 5. Verify --------------------------------------------------------
+- name: Get Ingress Controller service
+  ansible.builtin.command: kubectl -n {{ ingress_namespace }} get svc
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: ingress_svc
+  changed_when: false
+
+- name: Display Ingress Controller service
+  ansible.builtin.debug:
+    msg: "{{ ingress_svc.stdout_lines }}"

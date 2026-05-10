@@ -1,0 +1,37 @@
+# =============================================================================
+# Jenkins Helm Values — jenkins/jenkins chart
+# =============================================================================
+# Managed by Ansible — do not edit manually.
+# =============================================================================
+
+controller:
+  image:
+    tag: "lts"
+  imagePullPolicy: IfNotPresent
+
+  # Service configuration — NodePort for host access
+  serviceType: NodePort
+  nodePort: {{ jenkins_nodeport }}
+  servicePort: {{ jenkins_http_port }}
+  agentListenerPort: 50000
+
+  # Use the pre-created ServiceAccount (with RBAC for todo-app namespace)
+  serviceAccount:
+    create: false
+    name: jenkins
+
+  # Mount the pre-created NFS-backed PVC
+  persistence:
+    existingClaim: "jenkins-home"
+
+  # Security context matching the NFS export permissions
+  securityContext:
+    fsGroup: 1000
+    runAsUser: 1000
+    runAsGroup: 1000
+
+  # JVM options
+  javaOpts: "-Djenkins.install.runSetupWizard=true"
+
+  # Skip default plugin installation for faster startup
+  installPlugins: false

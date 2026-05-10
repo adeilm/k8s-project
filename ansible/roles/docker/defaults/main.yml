@@ -1,0 +1,4 @@
+# Role: docker — default variables
+# Docker CE is installed from the official repository. No custom variables
+# are required — the role uses ansible_distribution_release for the apt repo.
+---

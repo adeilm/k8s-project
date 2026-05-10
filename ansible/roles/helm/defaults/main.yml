@@ -1,0 +1,3 @@
+# Role: helm — default variables
+---
+helm_version: "v3.14.2"

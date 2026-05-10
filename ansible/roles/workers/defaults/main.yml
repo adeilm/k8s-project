@@ -1,0 +1,3 @@
+# Role: workers — default variables
+# Workers use hostvars['k8s-master']['kube_join_command'] — no local defaults.
+---

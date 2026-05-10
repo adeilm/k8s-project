@@ -235,7 +235,7 @@ vagrant up
   │     └── Exécution du shell provisioner :
   │           ├── apt install python3-pip
   │           ├── pip3 install ansible
-  │           └── ansible-playbook playbook.yml
+  │           └── ansible-playbook site.yml
   │
   ├── 3. Play 1 — Préparation (sur k8s-master, worker1, worker2) :
   │     ├── Role: common
@@ -306,19 +306,30 @@ vagrant up
   │     │     ├── docker compose up -d
   │     │     └── Attendre que Nexus réponde (port 8081)
   │     │
-  ├── 8. Play 6 — Déployer Jenkins dans Kubernetes (sur k8s-master) :
+  ├── 8. Play 6 — Installer Helm et déployer Jenkins via Helm (sur k8s-master) :
+  │     └── Role: helm
+  │           └── Installer Helm 3 via le script officiel
   │     └── Role: jenkins
-  │           ├── Générer le manifest Kubernetes
-  │           ├── Créer Namespace / PV / PVC / Deployment / Service
-  │           ├── Attendre le rollout du Deployment
+  │           ├── Appliquer les prérequis (Namespaces, RBAC, PV/PVC)
+  │           ├── helm repo add jenkins
+  │           ├── Générer le fichier values depuis le template
+  │           ├── helm install jenkins jenkins/jenkins
+  │           ├── Créer le secret nexus-registry-creds
   │           ├── Vérifier l'accès HTTP via NodePort 30080
   │           └── Afficher le mot de passe admin initial
   │
-  └── 9. Play 7 — Validation (sur k8s-master) :
+  ├── 9. Play 7 — Déployer l'Ingress Controller NGINX via Helm (sur k8s-master) :
+  │     └── Role: nginx-ingress
+  │           ├── helm repo add ingress-nginx
+  │           ├── helm install ingress-nginx
+  │           └── Attendre que le controller soit prêt
+  │
+  └── 10. Play 8 — Validation (sur k8s-master) :
         ├── Attendre que tous les noeuds soient Ready
         ├── Afficher kubectl get nodes
         ├── Afficher kubectl get pods -A
-        └── Afficher kubectl -n jenkins get pods,svc,pvc
+        ├── Afficher kubectl -n jenkins get pods,svc,pvc
+        └── Afficher kubectl -n ingress-nginx get pods,svc
 ```
 
 ---
@@ -347,51 +358,85 @@ k8s-project/
 │   └── hello-world-v2/                  # Exemple nginx avec image depuis Nexus
 │
 └── ansible/
+    ├── ansible.cfg                      # Configuration Ansible (vault, roles path)
+    ├── .vault_pass                      # Mot de passe du vault (gitignored)
     ├── inventory.ini                    # Liste des machines et connexions SSH
-    ├── playbook.yml                     # Orchestration : quel rôle sur quelle machine
+    ├── site.yml                         # Orchestrateur principal — importe tous les playbooks
     │
-    ├── group_vars/
-    │   └── all.yml                      # Variables partagées (versions, IPs, services, etc.)
+    ├── group_vars/all/
+    │   ├── vars.yml                     # Variables non-secrètes
+    │   └── vault.yml                    # Secrets chiffrés (ansible-vault)
+    │
+    ├── playbooks/                       # Playbooks standalone (exécutables individuellement)
+    │   ├── cluster-prepare.yml          # common + containerd + kubernetes
+    │   ├── cluster-init.yml             # master + cni
+    │   ├── cluster-join.yml             # workers join
+    │   ├── services-prepare.yml         # VM services base setup
+    │   ├── services-deploy.yml          # NFS + Docker + Gitea + Nexus
+    │   ├── jenkins.yml                  # Helm + Jenkins
+    │   ├── ingress.yml                  # NGINX Ingress Controller via Helm
+    │   └── validate.yml                 # Vérification du cluster
     │
     └── roles/
         ├── common/                      # Prérequis système (K8s nodes)
+        │   ├── defaults/main.yml        #   → variables par défaut du rôle
         │   ├── tasks/main.yml           #   → swap, modules, sysctl, packages, /etc/hosts
         │   └── handlers/main.yml        #   → handler: sysctl --system
         │
         ├── containerd/                  # Runtime de conteneurs (K8s nodes)
+        │   ├── defaults/main.yml        #   → variables par défaut du rôle
         │   ├── tasks/main.yml           #   → install, config, SystemdCgroup, pause:3.9, start
         │   └── handlers/main.yml        #   → handler: restart containerd
         │
         ├── kubernetes/                  # Paquets K8s (K8s nodes)
+        │   ├── defaults/main.yml        #   → variables par défaut du rôle
         │   └── tasks/main.yml           #   → repo APT, install, hold, enable kubelet
         │
         ├── master/                      # Initialisation control plane
+        │   ├── defaults/main.yml        #   → variables par défaut du rôle
         │   └── tasks/main.yml           #   → kubeadm init, .kube/config, join command
         │
         ├── cni/                         # Plugin réseau
+        │   ├── defaults/main.yml        #   → variables par défaut du rôle
         │   └── tasks/main.yml           #   → download flannel, patch iface, apply
         │
         ├── workers/                     # Jonction des workers
+        │   ├── defaults/main.yml        #   → variables par défaut du rôle
         │   └── tasks/main.yml           #   → kubeadm join
         │
         ├── nfs/                         # Serveur NFS (services VM)
+        │   ├── defaults/main.yml        #   → variables par défaut du rôle
         │   ├── tasks/main.yml           #   → install, exports, démarrer
         │   └── handlers/main.yml        #   → handler: restart NFS
         │
         ├── docker/                      # Docker CE (services VM)
+        │   ├── defaults/main.yml        #   → variables par défaut du rôle
         │   └── tasks/main.yml           #   → repo Docker, install, démarrer
         │
         ├── gitea/                       # Gitea — serveur Git (services VM)
+        │   ├── defaults/main.yml        #   → variables par défaut du rôle
         │   ├── tasks/main.yml           #   → docker compose up, health check
         │   └── templates/docker-compose.yml.j2
         │
         ├── nexus/                       # Nexus — registre Docker (services VM)
+        │   ├── defaults/main.yml        #   → variables par défaut du rôle
         │   ├── tasks/main.yml           #   → docker compose up, health check
         │   └── templates/docker-compose.yml.j2
         │
-        └── jenkins/                     # Jenkins — CI/CD (dans Kubernetes)
-            ├── tasks/main.yml           #   → kubectl apply, rollout, health check, admin pwd
-            └── templates/jenkins-manifest.yml.j2
+        ├── helm/                        # Helm 3 (master node)
+        │   ├── defaults/main.yml        #   → helm_version
+        │   └── tasks/main.yml           #   → install script, vérification
+        │
+        ├── jenkins/                     # Jenkins — CI/CD (dans Kubernetes via Helm)
+        │   ├── defaults/main.yml        #   → variables par défaut du rôle
+        │   ├── tasks/main.yml           #   → prereqs, helm install, health check, admin pwd
+        │   └── templates/
+        │       ├── jenkins-prereqs.yml.j2  # Namespaces, RBAC, NFS PV/PVC
+        │       └── jenkins-values.yml.j2  # Valeurs Helm pour le chart Jenkins
+        │
+        └── nginx-ingress/               # NGINX Ingress Controller (via Helm)
+            ├── defaults/main.yml        #   → ingress_namespace, nodeports
+            └── tasks/main.yml           #   → helm install, rollout, verify
 ```
 
 ### Vagrantfile — Points Clés
@@ -421,8 +466,11 @@ NODES = [
   workers
 ```
 
-### group_vars/all.yml — Variables Importantes
+### group_vars/all/ — Variables
 
+Les variables sont réparties en deux fichiers :
+
+**vars.yml** — Variables non-secrètes :
 ```yaml
 # Kubernetes
 kube_version: "1.29.2-1.1"       # Version exacte de K8s
@@ -435,11 +483,28 @@ nfs_export_path: "/srv/nfs"        # Répertoire NFS racine
 gitea_http_port: 3000              # Gitea → http://192.168.56.20:3000
 nexus_http_port: 8081              # Nexus → http://192.168.56.20:8081
 nexus_docker_port: 8082            # Nexus Docker registry port
+nexus_admin_password: "{{ vault_nexus_admin_password }}"  # Référence au vault
+
+# Helm
+helm_version: "v3.14.2"            # Version de Helm
+
+# Jenkins (déployé via Helm)
 jenkins_http_port: 8080            # Port HTTP du conteneur Jenkins
 jenkins_nodeport: 30080            # Jenkins → http://192.168.56.10:30080
 jenkins_namespace: "jenkins"       # Namespace Kubernetes de Jenkins
 jenkins_nfs_path: "/srv/nfs/jenkins-data"
+
+# Ingress Controller
+ingress_namespace: "ingress-nginx"
+ingress_http_nodeport: 31080       # Ingress → http://192.168.56.10:31080
 ```
+
+**vault.yml** — Secrets chiffrés (ansible-vault) :
+```yaml
+vault_nexus_admin_password: "adminadmin"
+```
+
+Chaque rôle possède aussi un fichier `defaults/main.yml` documentant les variables attendues par le rôle.
 
 ---
 
@@ -504,7 +569,7 @@ Si les deux ne sont pas alignés, les Pods crashent avec des erreurs de cgroup.
 
 ## 8. Applications incluses
 
-Le repo contient aussi des manifests d'applications de démonstration. Ces applications ne sont pas déployées automatiquement par `ansible/playbook.yml`.
+Le repo contient aussi des manifests d'applications de démonstration. Ces applications ne sont pas déployées automatiquement par les playbooks Ansible.
 
 | Chemin | Description | Ports / accès | Remarque |
 |--------|-------------|---------------|----------|

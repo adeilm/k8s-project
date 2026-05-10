@@ -1,0 +1,3 @@
+# Role: cni — default variables
+---
+flannel_manifest_url: "https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml"

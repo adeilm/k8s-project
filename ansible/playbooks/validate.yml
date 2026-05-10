@@ -1,0 +1,62 @@
+# =============================================================================
+# Playbook: validate — Validate the Kubernetes cluster
+# =============================================================================
+# Run standalone: ansible-playbook playbooks/validate.yml
+# =============================================================================
+---
+- name: Validate Kubernetes cluster
+  hosts: masters
+  become: false
+  gather_facts: false
+  tasks:
+    # Wait for all nodes to become Ready
+    - name: Wait for all nodes to be Ready
+      ansible.builtin.shell: |
+        kubectl get nodes --no-headers | grep -v " Ready " | wc -l
+      register: not_ready_count
+      until: not_ready_count.stdout | trim | int == 0
+      retries: 60
+      delay: 10
+      changed_when: false
+
+    # Display node status
+    - name: Get node status
+      ansible.builtin.command: kubectl get nodes -o wide
+      register: nodes_output
+      changed_when: false
+
+    - name: Display node status
+      ansible.builtin.debug:
+        msg: "{{ nodes_output.stdout_lines }}"
+
+    # Display pod status
+    - name: Get pod status across all namespaces
+      ansible.builtin.command: kubectl get pods -A -o wide
+      register: pods_output
+      changed_when: false
+
+    - name: Display pod status
+      ansible.builtin.debug:
+        msg: "{{ pods_output.stdout_lines }}"
+
+    # Display Jenkins workload state
+    - name: Get Jenkins resources
+      ansible.builtin.command: kubectl -n {{ jenkins_namespace }} get pods,svc,pvc
+      register: jenkins_output
+      changed_when: false
+
+    - name: Display Jenkins resources
+      ansible.builtin.debug:
+        msg: "{{ jenkins_output.stdout_lines }}"
+
+    # Display Ingress Controller state
+    - name: Get Ingress Controller resources
+      ansible.builtin.command: kubectl -n {{ ingress_namespace }} get pods,svc
+      register: ingress_output
+      changed_when: false
+      failed_when: false
+
+    - name: Display Ingress Controller resources
+      ansible.builtin.debug:
+        msg: "{{ ingress_output.stdout_lines }}"
+      when: ingress_output.rc == 0

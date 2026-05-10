@@ -1,0 +1,14 @@
+# =============================================================================
+# Playbook: cluster-prepare — System prerequisites for all K8s nodes
+# =============================================================================
+# Run standalone: ansible-playbook playbooks/cluster-prepare.yml
+# =============================================================================
+---
+- name: Prepare Kubernetes nodes
+  hosts: k8s_nodes
+  become: true
+  gather_facts: true
+  roles:
+    - role: common
+    - role: containerd
+    - role: kubernetes

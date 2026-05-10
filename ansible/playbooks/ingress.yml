@@ -1,0 +1,14 @@
+# =============================================================================
+# Playbook: ingress — Deploy NGINX Ingress Controller via Helm
+# =============================================================================
+# Run standalone: ansible-playbook playbooks/ingress.yml
+# Requires: Helm installed on master (handled by the helm role below).
+# =============================================================================
+---
+- name: Deploy NGINX Ingress Controller
+  hosts: masters
+  become: true
+  gather_facts: false
+  roles:
+    - role: helm
+    - role: nginx-ingress

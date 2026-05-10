@@ -34,7 +34,8 @@ HOST (Windows + VirtualBox)
 - Host-only network `192.168.56.0/24` for VM-to-VM traffic.
 - Pod network `10.244.0.0/16` (Flannel CNI, forced on `enp0s8` to match host-only NIC).
 - Service network `10.96.0.0/12` (default Kubernetes ClusterIP range).
-- All app endpoints exposed via **NodePort** (no Ingress controller in this build).
+- NGINX Ingress Controller available on NodePort `31080` for path/host-based routing.
+- Individual services also exposed via **NodePort** for direct access.
 
 ### Runtime
 
@@ -53,9 +54,22 @@ k8s-project/
 ├── REVISION.md                         # ← THIS FILE
 │
 ├── ansible/
+│   ├── ansible.cfg                     # Ansible configuration (vault, roles path)
+│   ├── .vault_pass                     # Vault password file (gitignored)
 │   ├── inventory.ini                   # Groups: masters, workers, services, k8s_nodes
-│   ├── playbook.yml                    # 7 plays orchestrating everything
-│   ├── group_vars/all.yml              # kube_version, master_ip, ports, NFS exports, etc.
+│   ├── site.yml                        # Main orchestrator — imports all playbooks
+│   ├── group_vars/all/
+│   │   ├── vars.yml                    # Non-secret variables
+│   │   └── vault.yml                   # Encrypted secrets (ansible-vault)
+│   ├── playbooks/                      # Standalone playbooks (can run individually)
+│   │   ├── cluster-prepare.yml         # common + containerd + kubernetes
+│   │   ├── cluster-init.yml            # master init + Flannel CNI
+│   │   ├── cluster-join.yml            # workers join
+│   │   ├── services-prepare.yml        # services VM base setup
+│   │   ├── services-deploy.yml         # NFS + Docker + Gitea + Nexus
+│   │   ├── jenkins.yml                 # Helm + Jenkins deployment
+│   │   ├── ingress.yml                 # NGINX Ingress Controller via Helm
+│   │   └── validate.yml                # Cluster health checks
 │   └── roles/
 │       ├── common/                     # Swap off, kernel modules, sysctl, /etc/hosts
 │       ├── containerd/                 # containerd install + insecure registry config
@@ -67,7 +81,9 @@ k8s-project/
 │       ├── docker/                     # Docker CE (services VM only)
 │       ├── gitea/                      # Gitea via Docker Compose
 │       ├── nexus/                      # Nexus 3 via Docker Compose
-│       └── jenkins/                    # Jenkins as a Kubernetes Deployment + RBAC
+│       ├── helm/                       # Helm 3 binary installation
+│       ├── jenkins/                    # Jenkins via Helm chart + RBAC + NFS PV
+│       └── nginx-ingress/              # NGINX Ingress Controller via Helm
 │
 └── apps/todo/
     ├── frontend/    Dockerfile, index.html, app.js, style.css   (nginx serving static UI)
@@ -131,13 +147,16 @@ The Kubernetes manifests stay in this monorepo; the application source lives in 
 |---|---|---|
 | **Vagrant** | Reproducible VMs from `Vagrantfile` | Lab is local, no cloud; identical setup on any host with VirtualBox |
 | **VirtualBox** | Hypervisor | Free, supported by Vagrant by default |
-| **Ansible** | Configure all VMs from a single playbook | Idempotent, agentless (SSH only), runs from the services VM so Windows hosts do not need Ansible |
+| **Ansible** | Configure all VMs from split playbooks | Idempotent, agentless (SSH only), runs from the services VM so Windows hosts do not need Ansible |
+| **Ansible Vault** | Encrypt sensitive variables | Credentials stored encrypted in `vault.yml`, decrypted at runtime via `.vault_pass` |
 | **kubeadm** | Bootstrap the Kubernetes control plane and join nodes | Official, low-level, gives full control. Alternatives: kops (AWS), kubespray (Ansible-heavy), managed (EKS/GKE/AKS) — not local |
 | **containerd** | Container runtime on K8s nodes | dockershim removed in K8s 1.24; containerd is the lightweight CRI-native default |
 | **Flannel** | CNI providing pod networking | Simple VXLAN overlay, sufficient for a single cluster. Calico/Cilium would be needed for NetworkPolicies |
+| **Helm 3** | Kubernetes package manager | Deploys Jenkins and NGINX Ingress via official charts — tested defaults, upgrade paths, less YAML to maintain |
+| **NGINX Ingress** | HTTP/HTTPS routing into the cluster | Single entry point replaces per-service NodePorts; supports path/host-based routing |
 | **Gitea** | Self-hosted Git server | Lightweight (Go), runs in one Docker container, full GitHub-like UI |
 | **Nexus 3** | Private artifact and Docker registry | Hosts our images locally; supports anonymous pulls for cluster pull-through, authenticated push for Jenkins |
-| **Jenkins (in K8s)** | CI/CD orchestrator | Industry standard, Kubernetes plugin spawns ephemeral build agents per build = clean, parallel, isolated |
+| **Jenkins (Helm)** | CI/CD orchestrator | Deployed via Helm chart into Kubernetes; Kubernetes plugin spawns ephemeral build agents per build = clean, parallel, isolated |
 | **Kaniko** | Build OCI images **inside a Pod**, no Docker daemon | Daemonless and rootless, avoids exposing the host Docker socket — security improvement over `docker build` from inside Jenkins |
 | **kubectl (Bitnami legacy image)** | Apply manifests / set images from the agent Pod | The `bitnami/kubectl` image was deprecated, switched to `bitnamilegacy/kubectl:1.29` |
 | **NFS** | ReadWriteMany persistent storage for the cluster | Lets PostgreSQL, Jenkins home, etc. survive Pod rescheduling without cloud-managed disks |
@@ -159,7 +178,7 @@ The honest list — anticipate the professor asking "what didn't work the first 
 | 7 | Webhook delivered HTTP 200 but no Jenkins build started | The Gitea Jenkins plugin only triggers Multibranch projects, not plain Pipeline jobs. Plain Pipeline needs a different trigger | Switched the webhook URL to `/github-webhook/` and enabled "GitHub hook trigger for GITScm polling" on the job — the GitHub plugin matches webhooks by SCM URL and is plugin-agnostic |
 | 8 | Webhook delivery returned response code 0 | New Gitea versions block private-IP webhook targets by default | Added `[webhook] ALLOWED_HOST_LIST = 192.168.56.0/24,localhost,private` to Gitea's `app.ini` |
 | 9 | `kubectl set image` hung for several minutes during deploys | Default kubectl has no client timeout; if the API is briefly slow, the call blocks indefinitely | Added `--request-timeout=30s` to kubectl invocations in the Jenkinsfiles |
-| 10 | NFS mount for the postgres Pod failed: "No such file or directory" | The export directory was missing on the services VM (older provision had only `mysql-data`) | `nfs_exports` in `group_vars/all.yml` now lists `mysql-data`, `jenkins-data`, `todo-postgres-data` — the role creates each directory and adds it to `/etc/exports` |
+| 10 | NFS mount for the postgres Pod failed: "No such file or directory" | The export directory was missing on the services VM (older provision had only `mysql-data`) | `nfs_exports` in `group_vars/all/vars.yml` now lists `mysql-data`, `jenkins-data`, `todo-postgres-data` — the role creates each directory and adds it to `/etc/exports` |
 | 11 | `nexus-registry-creds` Secret missing → Kaniko could not authenticate to Nexus | The secret is required both for Kaniko's docker-config mount and for `imagePullSecrets` in the app manifests | The Jenkins role creates the secret via `kubectl create secret docker-registry` in both namespaces |
 | 12 | Master Node intermittently flips to `NotReady` after `vagrant halt; vagrant up` | Containerd / kubelet PLEG hangs after VM suspend-resume on a resource-tight host | Documented workaround: `sudo systemctl restart containerd kubelet` on the affected node. Permanent fix would be increasing host RAM or moving Jenkins off NFS |
 | 13 | Kaniko hung during `nginx:1.27-alpine` pull with `i/o timeout` even after CoreDNS upstream fix | CoreDNS returned only AAAA (IPv6) records for some upstream lookups; cluster has no IPv6 routing (Flannel + Vagrant are IPv4-only), so Go's HTTP client tried IPv6 first and stalled | Added `template ANY AAAA . { rcode NOERROR }` to the CoreDNS Corefile so every external lookup returns IPv4 only. Now baked into the `master` Ansible role alongside the kube-proxy patch |
@@ -255,7 +274,7 @@ A. `192.168.56.0/24` for the VMs (host-only), `10.244.0.0/16` for Pods (Flannel 
 A. Browser hits `192.168.56.10:30081`. kube-proxy's iptables rules on the master (NodePort) DNAT the packet to a backend Pod IP in `10.244.x.x`. If the chosen Pod is on a worker, the packet crosses Flannel's VXLAN tunnel to the right node.
 
 **Q. Are you using Ingress?**
-A. No. Each app is exposed via NodePort. Adding an Ingress controller (nginx-ingress / traefik) would replace the per-app NodePorts with one entry point and hostname-based routing — that is a bonus we did not implement to keep the demo small.
+A. Yes. We deploy the NGINX Ingress Controller via Helm on NodePort `31080`. It provides a single HTTP entry point for the cluster. Individual services are still accessible via their own NodePorts for convenience, but Ingress resources can be created for path/host-based routing through the controller.
 
 ### Storage
 
@@ -293,8 +312,13 @@ The professor's note allows bonus points around security. We implemented:
 - Disabled root for the Jenkins container (`runAsUser: 1000`, `fsGroup: 1000`).
 - Idempotent Ansible (re-runnable, no manual steps).
 - Insecure Nexus registry restricted to `192.168.56.0/24`.
+- **Ansible Vault** for encrypted secret management (credentials not in plaintext).
+- **Helm** for Jenkins and Ingress (production-grade package management).
+- **NGINX Ingress Controller** for HTTP routing into the cluster.
+- **Split playbooks** for independent execution of individual stages.
+- **Role defaults** documenting the variable interface of each role.
 
-Not implemented (would be additional bonuses): NetworkPolicies (requires Calico, not Flannel), Kubernetes audit logging, Ansible Vault for secrets, Prometheus/Grafana monitoring, an Ingress Controller, TLS on the Nexus endpoint.
+Not implemented (would be additional bonuses): NetworkPolicies (requires Calico, not Flannel), Kubernetes audit logging, Prometheus/Grafana monitoring, TLS on the Nexus endpoint.
 
 ---
 
@@ -312,10 +336,10 @@ Final state of the project root:
 .gitattributes
 .gitignore
 DOCUMENTATION.md      ← long-form FR docs (kept)
-README.md             ← quick start (kept)
-REVISION.md           ← THIS FILE (new, study aid)
+README.md             ← quick start (updated)
+REVISION.md           ← THIS FILE (study aid)
 Vagrantfile
-ansible/              ← all roles, variables, playbook
+ansible/              ← roles, split playbooks, vault, ansible.cfg
 apps/todo/            ← frontend + backend + manifests
 docs/                 ← Tunisian-dialect Kubernetes guide (LaTeX + PDF) — kept untouched
 ```

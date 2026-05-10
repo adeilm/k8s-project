@@ -1,0 +1,42 @@
+# =============================================================================
+# Role: helm — Install the Helm package manager
+# =============================================================================
+# Downloads and installs Helm 3 using the official install script.
+# Idempotent — skips if Helm is already installed.
+# =============================================================================
+---
+
+# ---------- 1. Check if Helm is already installed ----------------------------
+- name: Check if Helm is installed
+  ansible.builtin.command: helm version --short
+  register: helm_check
+  changed_when: false
+  failed_when: false
+  become: false
+
+# ---------- 2. Download the official Helm install script ---------------------
+- name: Download Helm install script
+  ansible.builtin.get_url:
+    url: https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+    dest: /tmp/get_helm.sh
+    mode: "0755"
+  when: helm_check.rc != 0
+
+# ---------- 3. Run the installer --------------------------------------------
+- name: Install Helm {{ helm_version }}
+  ansible.builtin.command: /tmp/get_helm.sh
+  environment:
+    DESIRED_VERSION: "{{ helm_version }}"
+  when: helm_check.rc != 0
+  changed_when: true
+
+# ---------- 4. Verify installation -------------------------------------------
+- name: Verify Helm installation
+  ansible.builtin.command: helm version --short
+  register: helm_version_output
+  changed_when: false
+  become: false
+
+- name: Display Helm version
+  ansible.builtin.debug:
+    msg: "Helm installed: {{ helm_version_output.stdout }}"

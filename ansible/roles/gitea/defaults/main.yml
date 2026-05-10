@@ -1,0 +1,6 @@
+# Role: gitea — default variables
+---
+gitea_http_port: 3000
+gitea_ssh_port: 2222
+gitea_data_dir: "/opt/gitea"
+services_ip: "192.168.56.20"

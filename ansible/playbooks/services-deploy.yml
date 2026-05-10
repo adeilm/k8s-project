@@ -1,0 +1,15 @@
+# =============================================================================
+# Playbook: services-deploy — Deploy NFS, Docker, Gitea, Nexus
+# =============================================================================
+# Run standalone: ansible-playbook playbooks/services-deploy.yml
+# =============================================================================
+---
+- name: Deploy services on services VM
+  hosts: services
+  become: true
+  gather_facts: true
+  roles:
+    - role: nfs
+    - role: docker
+    - role: gitea
+    - role: nexus

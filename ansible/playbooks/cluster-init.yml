@@ -1,0 +1,13 @@
+# =============================================================================
+# Playbook: cluster-init — Initialize the control plane and install CNI
+# =============================================================================
+# Run standalone: ansible-playbook playbooks/cluster-init.yml
+# =============================================================================
+---
+- name: Initialize Kubernetes control plane
+  hosts: masters
+  become: true
+  gather_facts: false
+  roles:
+    - role: master
+    - role: cni

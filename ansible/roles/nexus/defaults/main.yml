@@ -1,0 +1,5 @@
+# Role: nexus — default variables
+---
+nexus_http_port: 8081
+nexus_docker_port: 8082
+nexus_data_dir: "/opt/nexus"

@@ -1,0 +1,12 @@
+# Role: common — default variables
+---
+common_packages:
+  - apt-transport-https
+  - ca-certificates
+  - curl
+  - gnupg
+  - lsb-release
+  - software-properties-common
+  - nfs-common
+
+cluster_hosts: []

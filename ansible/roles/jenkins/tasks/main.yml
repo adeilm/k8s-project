@@ -1,35 +1,90 @@
 # =============================================================================
-# Role: jenkins — Deploy Jenkins inside the Kubernetes cluster
+# Role: jenkins — Deploy Jenkins inside Kubernetes using Helm
 # =============================================================================
-# Jenkins runs as a standard Deployment exposed through a NodePort service.
-# Persistent data is stored on the services VM over NFS so the Jenkins home
-# directory survives pod restarts and reprovisioning.
+# Jenkins runs as a Helm release in the jenkins namespace. Persistent data is
+# stored on the services VM over NFS. Prerequisites (namespaces, RBAC, PV/PVC)
+# are applied as raw manifests before the Helm install.
 # =============================================================================
 ---
 
-# ---------- 1. Render the Kubernetes manifest --------------------------------
-- name: Render Jenkins Kubernetes manifest
+# ---------- 1. Apply prerequisite resources (namespaces, RBAC, NFS PV/PVC) ---
+- name: Render Jenkins prerequisite manifest
   ansible.builtin.template:
-    src: jenkins-manifest.yml.j2
-    dest: /tmp/jenkins-manifest.yml
+    src: jenkins-prereqs.yml.j2
+    dest: /tmp/jenkins-prereqs.yml
     owner: root
     group: root
     mode: "0644"
-  register: jenkins_manifest
 
-# ---------- 2. Apply the manifest --------------------------------------------
-- name: Apply Jenkins Kubernetes manifest
+- name: Apply Jenkins prerequisite resources
   ansible.builtin.command:
-    cmd: kubectl apply -f /tmp/jenkins-manifest.yml
+    cmd: kubectl apply -f /tmp/jenkins-prereqs.yml
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
-  register: jenkins_apply
-  changed_when: "'created' in jenkins_apply.stdout or 'configured' in jenkins_apply.stdout"
+  register: prereqs_apply
+  changed_when: "'created' in prereqs_apply.stdout or 'configured' in prereqs_apply.stdout"
 
-# ---------- 2b. Nexus registry pull secret -----------------------------------
-# Required by:
-#   - Kaniko in Jenkinsfiles (mounted as /kaniko/.docker/config.json)
-#   - imagePullSecrets in todo-app Deployments
+# ---------- 2. Add Jenkins Helm repository -----------------------------------
+- name: Add Jenkins Helm repository
+  ansible.builtin.command: helm repo add jenkins https://charts.jenkins.io
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: jenkins_repo_add
+  changed_when: "'has been added' in jenkins_repo_add.stdout"
+  failed_when: false
+
+- name: Update Helm repositories
+  ansible.builtin.command: helm repo update
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  changed_when: false
+
+# ---------- 3. Render Helm values file ----------------------------------------
+- name: Render Jenkins Helm values
+  ansible.builtin.template:
+    src: jenkins-values.yml.j2
+    dest: /tmp/jenkins-values.yml
+    owner: root
+    group: root
+    mode: "0644"
+
+# ---------- 4. Install or upgrade Jenkins via Helm ----------------------------
+- name: Check if Jenkins Helm release exists
+  ansible.builtin.command: helm status jenkins -n {{ jenkins_namespace }}
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: jenkins_helm_check
+  changed_when: false
+  failed_when: false
+
+- name: Install Jenkins via Helm
+  ansible.builtin.command: >
+    helm install jenkins jenkins/jenkins
+    --namespace {{ jenkins_namespace }}
+    --values /tmp/jenkins-values.yml
+    {{ '--version ' + jenkins_chart_version if jenkins_chart_version else '' }}
+    --wait
+    --timeout 15m
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  when: jenkins_helm_check.rc != 0
+  changed_when: true
+
+- name: Upgrade Jenkins via Helm (if already installed)
+  ansible.builtin.command: >
+    helm upgrade jenkins jenkins/jenkins
+    --namespace {{ jenkins_namespace }}
+    --values /tmp/jenkins-values.yml
+    {{ '--version ' + jenkins_chart_version if jenkins_chart_version else '' }}
+    --wait
+    --timeout 15m
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  when: jenkins_helm_check.rc == 0
+  register: jenkins_upgrade
+  changed_when: "'has been upgraded' in jenkins_upgrade.stdout"
+
+# ---------- 5. Create Nexus registry pull secret ------------------------------
 - name: Create nexus-registry-creds Secret in jenkins and todo-app namespaces
   ansible.builtin.shell: |
     kubectl -n {{ item }} create secret docker-registry nexus-registry-creds \
@@ -44,15 +99,7 @@
     - "{{ todo_namespace }}"
   changed_when: false
 
-# ---------- 3. Wait for the Deployment rollout --------------------------------
-- name: Wait for Jenkins deployment rollout
-  ansible.builtin.command:
-    cmd: kubectl -n {{ jenkins_namespace }} rollout status deployment/jenkins --timeout=900s
-  environment:
-    KUBECONFIG: /etc/kubernetes/admin.conf
-  changed_when: false
-
-# ---------- 4. Wait for Jenkins HTTP endpoint ---------------------------------
+# ---------- 6. Wait for Jenkins HTTP endpoint ---------------------------------
 - name: Wait for Jenkins to respond
   ansible.builtin.uri:
     url: "http://{{ master_ip }}:{{ jenkins_nodeport }}/login"
@@ -63,16 +110,15 @@
   delay: 10
   until: jenkins_health.status == 200
 
-# ---------- 5. Find the Jenkins pod -------------------------------------------
+# ---------- 7. Retrieve the initial admin password ----------------------------
 - name: Get Jenkins pod name
   ansible.builtin.command:
-    cmd: kubectl -n {{ jenkins_namespace }} get pods -l app=jenkins -o jsonpath={.items[0].metadata.name}
+    cmd: kubectl -n {{ jenkins_namespace }} get pods -l app.kubernetes.io/name=jenkins -o jsonpath={.items[0].metadata.name}
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
   register: jenkins_pod_name
   changed_when: false
 
-# ---------- 6. Retrieve the initial admin password ----------------------------
 - name: Get Jenkins initial admin password
   ansible.builtin.command:
     cmd: kubectl -n {{ jenkins_namespace }} exec {{ jenkins_pod_name.stdout }} -- cat /var/jenkins_home/secrets/initialAdminPassword

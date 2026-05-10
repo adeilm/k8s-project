@@ -1,0 +1,12 @@
+# =============================================================================
+# Playbook: cluster-join — Join worker nodes to the cluster
+# =============================================================================
+# Run standalone: ansible-playbook playbooks/cluster-join.yml
+# =============================================================================
+---
+- name: Join worker nodes to the cluster
+  hosts: workers
+  become: true
+  gather_facts: false
+  roles:
+    - role: workers

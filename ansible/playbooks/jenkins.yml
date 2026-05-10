@@ -1,0 +1,14 @@
+# =============================================================================
+# Playbook: jenkins — Deploy Jenkins inside Kubernetes via Helm
+# =============================================================================
+# Run standalone: ansible-playbook playbooks/jenkins.yml
+# Requires: Helm installed on master (handled by the helm role below).
+# =============================================================================
+---
+- name: Deploy Jenkins on Kubernetes
+  hosts: masters
+  become: true
+  gather_facts: false
+  roles:
+    - role: helm
+    - role: jenkins

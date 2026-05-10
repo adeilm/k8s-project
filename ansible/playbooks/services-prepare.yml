@@ -1,0 +1,30 @@
+# =============================================================================
+# Playbook: services-prepare — Base setup for the services VM
+# =============================================================================
+# Run standalone: ansible-playbook playbooks/services-prepare.yml
+# =============================================================================
+---
+- name: Prepare services VM
+  hosts: services
+  become: true
+  gather_facts: true
+  tasks:
+    # Install prerequisite packages
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install common prerequisite packages
+      ansible.builtin.apt:
+        name: "{{ common_packages }}"
+        state: present
+
+    # Populate /etc/hosts with cluster node entries
+    - name: Add cluster host entries to /etc/hosts
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: '.*\s{{ item.hostname }}$'
+        line: "{{ item.ip }}  {{ item.hostname }}"
+        state: present
+      loop: "{{ cluster_hosts }}"

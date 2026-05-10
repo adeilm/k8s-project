@@ -1,0 +1,5 @@
+# Role: nginx-ingress — default variables
+---
+ingress_namespace: "ingress-nginx"
+ingress_http_nodeport: 31080
+ingress_https_nodeport: 31443

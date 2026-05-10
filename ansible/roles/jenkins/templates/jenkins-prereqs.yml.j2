@@ -1,3 +1,9 @@
+# =============================================================================
+# Jenkins prerequisites — Namespaces, RBAC, NFS PV/PVC
+# =============================================================================
+# These resources are NOT managed by the Helm chart. They must exist before
+# the Helm install runs.
+# =============================================================================
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -8,6 +14,7 @@ kind: Namespace
 metadata:
   name: {{ todo_namespace }}
 ---
+# ---------- RBAC: Jenkins agent management (within jenkins namespace) --------
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -41,6 +48,7 @@ roleRef:
   kind: Role
   name: jenkins-agent-manager
 ---
+# ---------- RBAC: Jenkins deployer (within todo-app namespace) ---------------
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -71,6 +79,7 @@ roleRef:
   kind: Role
   name: jenkins-todo-deployer
 ---
+# ---------- NFS-backed PersistentVolume for Jenkins home ---------------------
 apiVersion: v1
 kind: PersistentVolume
 metadata:
@@ -99,63 +108,3 @@ spec:
       storage: {{ jenkins_storage_size }}
   storageClassName: ""
   volumeName: jenkins-pv
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: jenkins
-  namespace: {{ jenkins_namespace }}
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: jenkins
-  template:
-    metadata:
-      labels:
-        app: jenkins
-    spec:
-      serviceAccountName: jenkins
-      automountServiceAccountToken: true
-      securityContext:
-        fsGroup: 1000
-      containers:
-        - name: jenkins
-          image: jenkins/jenkins:lts
-          imagePullPolicy: IfNotPresent
-          ports:
-            - containerPort: {{ jenkins_http_port }}
-              name: http
-            - containerPort: 50000
-              name: agent
-          env:
-            - name: JAVA_OPTS
-              value: -Djenkins.install.runSetupWizard=true
-          securityContext:
-            runAsUser: 1000
-            runAsGroup: 1000
-          volumeMounts:
-            - name: jenkins-home
-              mountPath: /var/jenkins_home
-      volumes:
-        - name: jenkins-home
-          persistentVolumeClaim:
-            claimName: jenkins-home
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: jenkins
-  namespace: {{ jenkins_namespace }}
-spec:
-  type: NodePort
-  selector:
-    app: jenkins
-  ports:
-    - name: http
-      port: {{ jenkins_http_port }}
-      targetPort: http
-      nodePort: {{ jenkins_nodeport }}
-    - name: agent
-      port: 50000
-      targetPort: agent

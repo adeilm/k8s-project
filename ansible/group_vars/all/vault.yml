@@ -1,0 +1,13 @@
+# =============================================================================
+# Ansible Vault — Encrypted secrets
+# =============================================================================
+# Encrypt this file:  ansible-vault encrypt group_vars/all/vault.yml
+# Decrypt this file:  ansible-vault decrypt group_vars/all/vault.yml
+# Edit in-place:      ansible-vault edit group_vars/all/vault.yml
+# View contents:      ansible-vault view group_vars/all/vault.yml
+#
+# Vault password is stored in .vault_pass (excluded from Git).
+# =============================================================================
+---
+
+vault_nexus_admin_password: "adminadmin"

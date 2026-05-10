@@ -1,0 +1,4 @@
+# Role: master — default variables
+---
+pod_network_cidr: "10.244.0.0/16"
+master_ip: "192.168.56.10"

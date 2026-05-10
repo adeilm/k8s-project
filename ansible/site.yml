@@ -1,0 +1,35 @@
+# =============================================================================
+# Site Playbook — Full cluster provisioning orchestrator
+# =============================================================================
+# Imports all sub-playbooks in the correct order. This is the main entry point.
+#
+# Full run:          ansible-playbook site.yml
+# Individual stages: ansible-playbook playbooks/jenkins.yml
+#                    ansible-playbook playbooks/ingress.yml
+#                    ansible-playbook playbooks/validate.yml
+# =============================================================================
+---
+
+# Stage 1 — Prepare all Kubernetes nodes (common + containerd + kubernetes)
+- import_playbook: playbooks/cluster-prepare.yml
+
+# Stage 2 — Initialize the control plane and install CNI
+- import_playbook: playbooks/cluster-init.yml
+
+# Stage 3 — Join worker nodes to the cluster
+- import_playbook: playbooks/cluster-join.yml
+
+# Stage 4 — Prepare the services VM (base packages, /etc/hosts)
+- import_playbook: playbooks/services-prepare.yml
+
+# Stage 5 — Deploy services VM workloads (NFS, Docker, Gitea, Nexus)
+- import_playbook: playbooks/services-deploy.yml
+
+# Stage 6 — Deploy Jenkins inside Kubernetes (via Helm)
+- import_playbook: playbooks/jenkins.yml
+
+# Stage 7 — Deploy NGINX Ingress Controller (via Helm)
+- import_playbook: playbooks/ingress.yml
+
+# Stage 8 — Validate the cluster
+- import_playbook: playbooks/validate.yml

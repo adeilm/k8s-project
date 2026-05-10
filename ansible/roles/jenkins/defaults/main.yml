@@ -1,0 +1,15 @@
+# Role: jenkins — default variables
+---
+jenkins_http_port: 8080
+jenkins_namespace: "jenkins"
+jenkins_nodeport: 30080
+jenkins_storage_size: "8Gi"
+jenkins_nfs_path: "/srv/nfs/jenkins-data"
+jenkins_chart_version: ""
+
+services_ip: "192.168.56.20"
+master_ip: "192.168.56.10"
+nexus_admin_user: "admin"
+nexus_admin_password: "{{ vault_nexus_admin_password }}"
+nexus_docker_port: 8082
+todo_namespace: "todo-app"

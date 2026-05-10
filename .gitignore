@@ -31,3 +31,9 @@ docs/*.toc
 docs/*.fdb_latexmk
 docs/*.fls
 .kubeconfig-for-jenkins
+
+# Ansible Vault
+ansible/.vault_pass
+
+# Gemini
+.gemini/
