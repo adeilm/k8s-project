@@ -15,14 +15,18 @@ controller:
   servicePort: {{ jenkins_http_port }}
   agentListenerPort: 50000
 
-  # Use the pre-created ServiceAccount (with RBAC for todo-app namespace)
+  # Let Helm create and manage the ServiceAccount (RBAC is in prereqs)
   serviceAccount:
-    create: false
+    create: true
     name: jenkins
 
-  # Mount the pre-created NFS-backed PVC
-  persistence:
-    existingClaim: "jenkins-home"
+  # Use the pre-created NFS-backed PVC
+  # persistence is at root level
+  
+# Top level persistence configuration
+persistence:
+  enabled: true
+  existingClaim: "jenkins-home"
 
   # Security context matching the NFS export permissions
   securityContext:

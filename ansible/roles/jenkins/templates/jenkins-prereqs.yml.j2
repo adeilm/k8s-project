@@ -15,11 +15,8 @@ metadata:
   name: {{ todo_namespace }}
 ---
 # ---------- RBAC: Jenkins agent management (within jenkins namespace) --------
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: jenkins
-  namespace: {{ jenkins_namespace }}
+# NOTE: The ServiceAccount "jenkins" is created by the Helm chart.
+# We only define Roles/RoleBindings that the chart does not provide.
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
